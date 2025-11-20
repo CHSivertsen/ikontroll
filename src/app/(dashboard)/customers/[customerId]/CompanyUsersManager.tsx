@@ -1,0 +1,378 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+import { useCompanyUsers } from '@/hooks/useCompanyUsers';
+import type { CompanyUser } from '@/types/companyUser';
+
+const userSchema = z.object({
+  firstName: z.string().min(2, 'Fornavn må være minst 2 tegn'),
+  lastName: z.string().min(2, 'Etternavn må være minst 2 tegn'),
+  email: z.string().email('Ugyldig e-post'),
+  phone: z.string().min(4, 'Telefon må fylles ut'),
+  role: z.enum(['admin', 'user']),
+  status: z.enum(['active', 'inactive']),
+  password: z
+    .string()
+    .min(8, 'Passord må være minst 8 tegn')
+    .regex(
+      /^(?=.*[A-Za-z])(?=.*\d).+$/,
+      'Passord må inneholde både bokstaver og tall',
+    )
+    .optional(),
+});
+
+type UserFormValues = z.infer<typeof userSchema>;
+
+const defaultValues: UserFormValues = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  role: 'user',
+  status: 'active',
+  password: '',
+};
+
+interface Props {
+  ownerCompanyId: string;
+  customerId: string;
+}
+
+export default function CompanyUsersManager({
+  ownerCompanyId,
+  customerId,
+}: Props) {
+  const { users, loading, error, createUser, updateUser, deleteUser } =
+    useCompanyUsers(ownerCompanyId, customerId);
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<CompanyUser | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const form = useForm<UserFormValues>({
+    resolver: zodResolver(userSchema),
+    defaultValues,
+  });
+
+  const openCreate = () => {
+    setEditingUser(null);
+    form.reset(defaultValues);
+    setIsFormOpen(true);
+    setFormError(null);
+  };
+
+  const openEdit = (user: CompanyUser) => {
+    setEditingUser(user);
+    form.reset({
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      status: user.status,
+      password: '',
+    });
+    setIsFormOpen(true);
+    setFormError(null);
+  };
+
+  const closeForm = () => {
+    if (busy) return;
+    setIsFormOpen(false);
+    setEditingUser(null);
+    setFormError(null);
+  };
+
+  const onSubmit = async (values: UserFormValues) => {
+    try {
+      setBusy(true);
+      setFormError(null);
+      const { password, ...rest } = values;
+      if (editingUser) {
+        await updateUser(editingUser.id, rest);
+        closeForm();
+      } else {
+        if (!password) {
+          setFormError('Du må angi et passord for nye brukere.');
+          setBusy(false);
+          return;
+        }
+        await createUser(rest, password);
+        closeForm();
+      }
+    } catch (err) {
+      console.error('Failed to save user', err);
+      setFormError('Kunne ikke lagre brukeren.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async (user: CompanyUser) => {
+    const confirmed = window.confirm(
+      `Slett brukeren ${user.firstName} ${user.lastName}?`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteUser(user.id);
+    } catch (err) {
+      console.error('Failed to delete user', err);
+      alert('Kunne ikke slette brukeren.');
+    }
+  };
+
+  const userRows = useMemo(() => {
+    if (!users.length) {
+      return (
+        <tr>
+          <td
+            colSpan={4}
+            className="py-8 text-center text-sm text-slate-500"
+          >
+            Ingen brukere registrert ennå.
+          </td>
+        </tr>
+      );
+    }
+
+    return users.map((user) => (
+      <tr key={user.id} className="border-b border-slate-100 text-sm">
+        <td className="py-3">
+          <div className="font-semibold text-slate-900">
+            {user.firstName} {user.lastName}
+          </div>
+          <div className="text-xs text-slate-500">{user.email}</div>
+        </td>
+        <td className="py-3 text-slate-600">{user.phone}</td>
+        <td className="py-3">
+          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+            {user.role === 'admin' ? 'Admin' : 'Bruker'}
+          </span>
+        </td>
+        <td className="py-3">
+          <span
+            className={`rounded-full px-2 py-1 text-xs font-semibold ${
+              user.status === 'active'
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-amber-100 text-amber-700'
+            }`}
+          >
+            {user.status === 'active' ? 'Aktiv' : 'Inaktiv'}
+          </span>
+        </td>
+        <td className="py-3 text-right">
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => openEdit(user)}
+              className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Rediger
+            </button>
+            <button
+              onClick={() => handleDelete(user)}
+              className="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+            >
+              Slett
+            </button>
+          </div>
+        </td>
+      </tr>
+    ));
+  }, [users]);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">Brukere</h3>
+          <p className="text-sm text-slate-500">
+            Administrer tilgang for ansatte hos kunden.
+          </p>
+        </div>
+        <button
+          onClick={openCreate}
+          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+        >
+          + Ny bruker
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-10 text-center text-sm text-slate-500">
+          Laster brukere …
+        </div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full">
+            <thead>
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <th className="pb-2">Navn</th>
+                <th className="pb-2">Telefon</th>
+                <th className="pb-2">Rolle</th>
+                <th className="pb-2">Status</th>
+                <th className="pb-2 text-right">Handlinger</th>
+              </tr>
+            </thead>
+            <tbody>{userRows}</tbody>
+          </table>
+        </div>
+      )}
+
+      {isFormOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  {editingUser ? 'Rediger bruker' : 'Ny bruker'}
+                </p>
+                <h4 className="text-2xl font-semibold text-slate-900">
+                  {editingUser
+                    ? `${editingUser.firstName} ${editingUser.lastName}`
+                    : 'Brukerinformasjon'}
+                </h4>
+              </div>
+              <button
+                onClick={closeForm}
+                className="text-slate-400 transition hover:text-slate-700"
+                aria-label="Lukk"
+              >
+                ×
+              </button>
+            </div>
+
+            {formError && (
+              <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {formError}
+              </div>
+            )}
+
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="mt-6 space-y-4"
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field
+                  label="Fornavn"
+                  error={form.formState.errors.firstName?.message}
+                >
+                  <input
+                    {...form.register('firstName')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </Field>
+                <Field
+                  label="Etternavn"
+                  error={form.formState.errors.lastName?.message}
+                >
+                  <input
+                    {...form.register('lastName')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </Field>
+              </div>
+              <Field label="E-post" error={form.formState.errors.email?.message}>
+                <input
+                  type="email"
+                  {...form.register('email')}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </Field>
+              <Field label="Telefon" error={form.formState.errors.phone?.message}>
+                <input
+                  {...form.register('phone')}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </Field>
+              {!editingUser && (
+                <Field
+                  label="Passord (midlertidig)"
+                  error={form.formState.errors.password?.message}
+                >
+                  <input
+                    type="text"
+                    {...form.register('password')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    placeholder="Minst 8 tegn, bokstaver og tall"
+                  />
+                </Field>
+              )}
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Rolle" error={form.formState.errors.role?.message}>
+                  <select
+                    {...form.register('role')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="user">Bruker</option>
+                  </select>
+                </Field>
+                <Field
+                  label="Status"
+                  error={form.formState.errors.status?.message}
+                >
+                  <select
+                    {...form.register('status')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  >
+                    <option value="active">Aktiv</option>
+                    <option value="inactive">Inaktiv</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={busy}
+                >
+                  Avbryt
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+                  disabled={busy}
+                >
+                  {busy
+                    ? 'Lagrer …'
+                    : editingUser
+                      ? 'Oppdater bruker'
+                      : 'Opprett bruker'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type FieldProps = {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+};
+
+const Field = ({ label, error, children }: FieldProps) => (
+  <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+    {label}
+    {children}
+    {error && <span className="text-xs text-red-600">{error}</span>}
+  </label>
+);
+

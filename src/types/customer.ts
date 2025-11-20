@@ -1,0 +1,19 @@
+export type CustomerStatus = 'active' | 'inactive';
+
+export interface Customer {
+  id: string;
+  companyName: string;
+  address: string;
+  zipno: string;
+  place: string;
+  vatNumber: string;
+  status: CustomerStatus;
+  contactPerson: string;
+  contactPhone: string;
+  contactEmail: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export type CustomerPayload = Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>;
+

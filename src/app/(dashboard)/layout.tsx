@@ -1,0 +1,75 @@
+'use client';
+
+import { useEffect } from 'react';
+import type { ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+
+import { CompanyPicker } from '@/components/CompanyPicker';
+import { Sidebar } from '@/components/Sidebar';
+import { Topbar } from '@/components/Topbar';
+import { useAuth } from '@/context/AuthContext';
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { firebaseUser, profile, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !firebaseUser) {
+      router.replace('/login');
+    }
+  }, [firebaseUser, loading, router]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="space-y-2 text-center">
+          <p className="text-sm uppercase tracking-wide text-slate-500">
+            Laster
+          </p>
+          <p className="text-lg font-semibold text-slate-700">
+            Klargjør IKontroll …
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (firebaseUser && profile) {
+    const hasAdminAccess = profile.companyIds.some((company) =>
+      company.roles.includes('admin'),
+    );
+
+    if (!hasAdminAccess) {
+      return (
+        <div className="flex h-screen flex-col items-center justify-center bg-slate-50 text-center">
+          <Topbar />
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="text-xl font-semibold text-slate-900">
+              Ingen administratortilganger
+            </p>
+            <p className="max-w-md text-sm text-slate-500">
+              Vi finner ingen selskaper der denne brukeren er administrator. Ta
+              kontakt med systemeier for å få tilgang.
+            </p>
+          </div>
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="flex h-screen flex-col bg-slate-50">
+      <Topbar />
+      <div className="flex flex-1">
+        <Sidebar />
+        <main className="flex-1 overflow-auto bg-slate-50 p-6">{children}</main>
+      </div>
+      <CompanyPicker />
+    </div>
+  );
+}
+
