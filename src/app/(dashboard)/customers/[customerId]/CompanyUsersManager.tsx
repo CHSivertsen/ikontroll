@@ -8,6 +8,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useCompanyUsers } from '@/hooks/useCompanyUsers';
 import type { CompanyUser } from '@/types/companyUser';
 
+const passwordSchema = z
+  .string()
+  .min(8, 'Passord må være minst 8 tegn')
+  .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, 'Passord må inneholde både bokstaver og tall');
+
 const userSchema = z.object({
   firstName: z.string().min(2, 'Fornavn må være minst 2 tegn'),
   lastName: z.string().min(2, 'Etternavn må være minst 2 tegn'),
@@ -15,14 +20,14 @@ const userSchema = z.object({
   phone: z.string().min(4, 'Telefon må fylles ut'),
   role: z.enum(['admin', 'user']),
   status: z.enum(['active', 'inactive']),
-  password: z
-    .string()
-    .min(8, 'Passord må være minst 8 tegn')
-    .regex(
-      /^(?=.*[A-Za-z])(?=.*\d).+$/,
-      'Passord må inneholde både bokstaver og tall',
-    )
-    .optional(),
+  password: z.preprocess(
+    (val) => {
+      if (typeof val !== 'string') return undefined;
+      const trimmed = val.trim();
+      return trimmed.length === 0 ? undefined : trimmed;
+    },
+    passwordSchema,
+  ).optional(),
 });
 
 type UserFormValues = z.infer<typeof userSchema>;
@@ -75,14 +80,13 @@ export default function CompanyUsersManager({
       phone: user.phone,
       role: user.role,
       status: user.status,
-      password: '',
+      password: undefined,
     });
     setIsFormOpen(true);
     setFormError(null);
   };
 
   const closeForm = () => {
-    if (busy) return;
     setIsFormOpen(false);
     setEditingUser(null);
     setFormError(null);
@@ -94,7 +98,9 @@ export default function CompanyUsersManager({
       setFormError(null);
       const { password, ...rest } = values;
       if (editingUser) {
-        await updateUser(editingUser.id, rest);
+        console.log('Updating user...', { id: editingUser.id, payload: rest });
+        await updateUser(editingUser.id, rest, editingUser.authUid);
+        console.log('Update completed');
         closeForm();
       } else {
         if (!password) {
@@ -107,7 +113,11 @@ export default function CompanyUsersManager({
       }
     } catch (err) {
       console.error('Failed to save user', err);
-      setFormError('Kunne ikke lagre brukeren.');
+      setFormError(
+        err instanceof Error
+          ? `Kunne ikke lagre brukeren: ${err.message}`
+          : 'Kunne ikke lagre brukeren.',
+      );
     } finally {
       setBusy(false);
     }
@@ -120,7 +130,7 @@ export default function CompanyUsersManager({
     if (!confirmed) return;
 
     try {
-      await deleteUser(user.id);
+      await deleteUser(user.id, user.authUid);
     } catch (err) {
       console.error('Failed to delete user', err);
       alert('Kunne ikke slette brukeren.');
@@ -260,7 +270,16 @@ export default function CompanyUsersManager({
             )}
 
             <form
-              onSubmit={form.handleSubmit(onSubmit)}
+              onSubmit={form.handleSubmit(
+                (values) => {
+                  console.log('handleSubmit success', values);
+                  void onSubmit(values);
+                },
+                (errors) => {
+                  console.error('handleSubmit validation errors', errors);
+                  setFormError('Skjemaet inneholder feil. Sjekk feltene og prøv igjen.');
+                },
+              )}
               className="mt-6 space-y-4"
             >
               <div className="grid gap-4 md:grid-cols-2">
@@ -287,7 +306,11 @@ export default function CompanyUsersManager({
                 <input
                   type="email"
                   {...form.register('email')}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  readOnly={!!editingUser}
+                  aria-readonly={editingUser ? 'true' : 'false'}
+                  className={`w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+                    editingUser ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : ''
+                  }`}
                 />
               </Field>
               <Field label="Telefon" error={form.formState.errors.phone?.message}>
@@ -344,6 +367,13 @@ export default function CompanyUsersManager({
                 </button>
                 <button
                   type="submit"
+                  onClick={() => {
+                    console.log('Submit button clicked', {
+                      editing: Boolean(editingUser),
+                      busy,
+                      values: form.getValues(),
+                    });
+                  }}
                   className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
                   disabled={busy}
                 >

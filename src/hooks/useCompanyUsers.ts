@@ -14,8 +14,12 @@ interface UseCompanyUsersState {
   loading: boolean;
   error: string | null;
   createUser: (payload: CompanyUserPayload, password: string) => Promise<void>;
-  updateUser: (id: string, payload: CompanyUserPayload) => Promise<void>;
-  deleteUser: (id: string) => Promise<void>;
+  updateUser: (
+    id: string,
+    payload: CompanyUserPayload,
+    authUid?: string,
+  ) => Promise<void>;
+  deleteUser: (id: string, authUid?: string) => Promise<void>;
 }
 
 export const useCompanyUsers = (
@@ -84,6 +88,7 @@ export const useCompanyUsers = (
 
   const callApi = useCallback(
     async <T,>(method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, any>) => {
+      console.log('company-users callApi start', { method, body });
       const response = await fetch('/api/company-users', {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -91,11 +96,28 @@ export const useCompanyUsers = (
       });
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error ?? 'Uventet feil mot API');
+        const text = await response.text().catch(() => '');
+        console.error('Company-users API error', {
+          method,
+          body,
+          status: response.status,
+          response: text,
+        });
+        let parsed: any = {};
+        try {
+          parsed = text ? JSON.parse(text) : {};
+        } catch (error) {
+          parsed = {};
+        }
+        throw new Error(
+          parsed?.error ??
+            `API-feil (${response.status}): ${text || 'Ukjent feil'}`,
+        );
       }
 
-      return (await response.json().catch(() => ({}))) as T;
+      const json = (await response.json().catch(() => ({}))) as T;
+      console.log('company-users callApi success', { method, body, json });
+      return json;
     },
     [],
   );
@@ -117,7 +139,7 @@ export const useCompanyUsers = (
   );
 
   const updateUser = useCallback(
-    async (id: string, payload: CompanyUserPayload) => {
+    async (id: string, payload: CompanyUserPayload, authUid?: string) => {
       if (!ownerCompanyId || !customerId) {
         throw new Error('Company is not selected');
       }
@@ -126,6 +148,7 @@ export const useCompanyUsers = (
         companyId: ownerCompanyId,
         customerId,
         userId: id,
+        authUid: authUid ?? id,
         user: payload,
       });
     },
@@ -133,7 +156,7 @@ export const useCompanyUsers = (
   );
 
   const deleteUser = useCallback(
-    async (id: string) => {
+    async (id: string, authUid?: string) => {
       if (!ownerCompanyId || !customerId) {
         throw new Error('Company is not selected');
       }
@@ -142,6 +165,7 @@ export const useCompanyUsers = (
         companyId: ownerCompanyId,
         customerId,
         userId: id,
+        authUid: authUid ?? id,
       });
     },
     [ownerCompanyId, customerId, callApi],

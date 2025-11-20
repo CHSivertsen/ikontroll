@@ -16,6 +16,7 @@ const validateBasePayload = (body: any) => {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
+  console.log('POST /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.user) missing.push('user');
   if (!body?.password) missing.push('password');
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json().catch(() => null);
+  console.log('PATCH /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.userId) missing.push('userId');
   if (!body?.user) missing.push('user');
@@ -80,7 +82,8 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, userId, user } = body;
+  const { companyId, customerId, userId, user, authUid } = body;
+  const authTarget = authUid ?? userId;
 
   try {
     const customerUsersRef = usersRoot
@@ -100,7 +103,7 @@ export async function PATCH(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    await adminAuth.updateUser(userId, {
+    await adminAuth.updateUser(authTarget, {
       email: user.email,
       displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
       disabled: user.status === 'inactive',
@@ -118,6 +121,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const body = await request.json().catch(() => null);
+  console.log('DELETE /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.userId) missing.push('userId');
 
@@ -128,7 +132,8 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, userId } = body;
+  const { companyId, customerId, userId, authUid } = body;
+  const authTarget = authUid ?? userId;
 
   try {
     const userDocRef = usersRoot
@@ -139,7 +144,7 @@ export async function DELETE(request: NextRequest) {
       .doc(userId);
 
     await userDocRef.delete();
-    await adminAuth.deleteUser(userId);
+    await adminAuth.deleteUser(authTarget);
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
