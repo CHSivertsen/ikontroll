@@ -1,0 +1,281 @@
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+
+import { useAuth } from '@/context/AuthContext';
+import { useCourses } from '@/hooks/useCourses';
+import type { Course, CoursePayload, CourseStatus } from '@/types/course';
+
+type CourseFormValues = {
+  title: string;
+  description?: string;
+  status: CourseStatus;
+};
+
+const STATUS_LABELS: Record<CourseStatus, string> = {
+  active: 'Aktiv',
+  inactive: 'Inaktiv',
+};
+
+const STATUS_STYLES: Record<CourseStatus, string> = {
+  active: 'bg-emerald-100 text-emerald-700',
+  inactive: 'bg-slate-100 text-slate-600',
+};
+
+export default function CourseManager() {
+  const router = useRouter();
+  const { companyId, profile } = useAuth();
+  const { courses, loading, error, createCourse, deleteCourse } = useCourses(
+    companyId ?? null,
+  );
+  const [isCreateOpen, setCreateOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleCreateCourse = async (values: CourseFormValues) => {
+    try {
+      if (!companyId || !profile) {
+        throw new Error('Mangler selskapskontekst');
+      }
+      const payload: CoursePayload = {
+        companyId,
+        createdById: profile.id,
+        title: values.title,
+        description: values.description ?? '',
+        status: values.status,
+      };
+      const id = await createCourse(payload);
+      setCreateOpen(false);
+      router.push(`/courses/${id}`);
+    } catch (err) {
+      console.error('Failed to create course', err);
+      setFormError(
+        err instanceof Error ? err.message : 'Kunne ikke opprette kurs.',
+      );
+    }
+  };
+
+  const handleManageCourse = (courseId: string) => {
+    router.push(`/courses/${courseId}`);
+  };
+
+  const handleDeleteCourse = async (course: Course) => {
+    const confirmed = window.confirm(
+      `Slett kurset "${course.title}"? Dette kan ikke angres.`,
+    );
+    if (!confirmed) return;
+    try {
+      await deleteCourse(course.id);
+    } catch (err) {
+      console.error('Failed to delete course', err);
+      alert('Kunne ikke slette kurs.');
+    }
+  };
+
+  if (!companyId) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+        Velg et selskap i toppen før du kan administrere kurs.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Kurs</h2>
+            <p className="text-sm text-slate-500">
+              Opprett kurs og gå videre til detaljer for å bygge emner og spørsmål.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setFormError(null);
+              setCreateOpen(true);
+            }}
+            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+          >
+            + Nytt kurs
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-sm text-slate-500">
+            Laster kurs …
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="pb-2">Tittel</th>
+                  <th className="pb-2">Status</th>
+                  <th className="pb-2">Sist oppdatert</th>
+                  <th className="pb-2 text-right">Handlinger</th>
+                </tr>
+              </thead>
+              <tbody>
+                {courses.map((course) => (
+                  <tr key={course.id} className="border-b border-slate-100 text-sm">
+                    <td className="py-3">
+                      <button
+                        onClick={() => handleManageCourse(course.id)}
+                        className="text-left font-semibold text-slate-700 transition hover:text-slate-900"
+                      >
+                        {course.title}
+                      </button>
+                      {course.description && (
+                        <p className="text-xs text-slate-500">{course.description}</p>
+                      )}
+                    </td>
+                    <td className="py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${STATUS_STYLES[course.status]}`}
+                      >
+                        {STATUS_LABELS[course.status]}
+                      </span>
+                    </td>
+                    <td className="py-3 text-xs text-slate-500">
+                      {course.updatedAt?.toLocaleString('no-NO') ??
+                        course.createdAt?.toLocaleString('no-NO') ??
+                        '—'}
+                    </td>
+                    <td className="py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => handleManageCourse(course.id)}
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          Administrer
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCourse(course)}
+                          className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
+                        >
+                          Slett
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {courses.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                Ingen kurs er opprettet ennå.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isCreateOpen && (
+        <CreateCourseModal
+          onClose={() => setCreateOpen(false)}
+          onSubmit={handleCreateCourse}
+          errorMessage={formError}
+        />
+      )}
+    </>
+  );
+}
+
+const CreateCourseModal = ({
+  onSubmit,
+  onClose,
+  errorMessage,
+}: {
+  onSubmit: (values: CourseFormValues) => Promise<void>;
+  onClose: () => void;
+  errorMessage: string | null;
+}) => {
+  const form = useForm<CourseFormValues>({
+    defaultValues: { title: '', description: '', status: 'active' },
+  });
+
+  const handleSubmit = form.handleSubmit(async (values) => {
+    await onSubmit(values);
+    form.reset();
+  });
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Nytt kurs
+            </p>
+            <h4 className="text-2xl font-semibold text-slate-900">Kursinformasjon</h4>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 transition hover:text-slate-700"
+            aria-label="Lukk"
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+            Tittel
+            <input
+              {...form.register('title', { required: true })}
+              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+            Beskrivelse
+            <textarea
+              {...form.register('description')}
+              rows={3}
+              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+            Status
+            <select
+              {...form.register('status')}
+              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="active">Aktiv</option>
+              <option value="inactive">Inaktiv</option>
+            </select>
+          </label>
+
+          {errorMessage && (
+            <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+              {errorMessage}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Avbryt
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Lagre og administrer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};

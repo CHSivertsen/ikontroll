@@ -299,21 +299,37 @@ export default function CustomerManager() {
           <div className="flex flex-wrap justify-end gap-2">
             <Link
               href={`/customers/${customer.id}`}
-              className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              aria-label="Administrer brukere"
             >
-              Brukere
+              <span className="text-xs font-semibold">👥</span>
             </Link>
             <button
               onClick={() => openEdit(customer)}
-              className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              aria-label="Rediger kunde"
             >
-              Rediger
+              <span className="text-xs font-semibold">✏️</span>
             </button>
             <button
               onClick={() => handleDelete(customer)}
-              className="rounded-lg border border-red-200 px-3 py-1 text-xs font-medium text-red-600 hover:border-red-300 hover:bg-red-50"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition hover:border-red-300 hover:bg-red-50"
+              aria-label="Slett kunde"
             >
-              Slett
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M15 5 5 15M5 5l10 10"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
           </div>
         </td>
