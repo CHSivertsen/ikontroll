@@ -1,0 +1,103 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+
+import { useAuth } from '@/context/AuthContext';
+import { db } from '@/lib/firebase';
+
+interface CourseProgressState {
+  completedModules: string[];
+  loading: boolean;
+  error: string | null;
+  setModuleCompletion: (moduleId: string, isComplete: boolean) => Promise<void>;
+}
+
+export const useCourseProgress = (courseId: string | null): CourseProgressState => {
+  const { firebaseUser } = useAuth();
+  const [completedModules, setCompletedModules] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const completedModulesRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (!courseId || !firebaseUser?.uid) {
+      setCompletedModules([]);
+      completedModulesRef.current = [];
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    const progressRef = doc(db, 'users', firebaseUser.uid, 'courseProgress', courseId);
+    setLoading(true);
+
+    const unsubscribe = onSnapshot(
+      progressRef,
+      (snapshot) => {
+        const data = snapshot.data();
+        const modules = ((data?.completedModules as string[]) ?? []).filter(Boolean);
+        setCompletedModules(modules);
+        completedModulesRef.current = modules;
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Failed to load course progress', err);
+        setCompletedModules([]);
+        setError('Kunne ikke hente kursfremdrift.');
+        setLoading(false);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [courseId, firebaseUser?.uid]);
+
+  useEffect(() => {
+    completedModulesRef.current = completedModules;
+  }, [completedModules]);
+
+  const setModuleCompletion = useCallback(
+    async (moduleId: string, isComplete: boolean) => {
+      if (!courseId || !firebaseUser?.uid || !moduleId) {
+        return;
+      }
+
+      const progressRef = doc(db, 'users', firebaseUser.uid, 'courseProgress', courseId);
+      const current = completedModulesRef.current ?? [];
+      const nextModules = isComplete
+        ? Array.from(new Set([...current, moduleId]))
+        : current.filter((id) => id !== moduleId);
+
+      setCompletedModules(nextModules);
+      completedModulesRef.current = nextModules;
+
+      try {
+        await setDoc(
+          progressRef,
+          {
+            courseId,
+            updatedAt: serverTimestamp(),
+            completedModules: nextModules,
+          },
+          { merge: true },
+        );
+        setError(null);
+      } catch (err) {
+        console.error('Failed to update module progress', err);
+        completedModulesRef.current = current;
+        setCompletedModules(current);
+        setError('Kunne ikke oppdatere fremdrift.');
+        throw err;
+      }
+    },
+    [courseId, firebaseUser?.uid],
+  );
+
+  return {
+    completedModules,
+    loading,
+    error,
+    setModuleCompletion,
+  };
+};

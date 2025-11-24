@@ -572,9 +572,14 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   };
 
   const handlePreviewCourse = useCallback(() => {
-    if (!courseId) return;
-    router.push(`/courses/${courseId}/preview`);
-  }, [courseId, router]);
+     if (!courseId) return;
+    const url = `/courses/${courseId}/preview?lang=${activeLanguage}`;
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      router.push(url);
+    }
+  }, [activeLanguage, courseId, router]);
 
   const handleCourseImageChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -590,6 +595,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
         setCourseImageUrl(url);
         form.setValue('courseImageUrl', url, { shouldDirty: true });
       }
+      event.target.value = '';
     } catch (err) {
       console.error('Failed to upload course image', err);
       setImageError(

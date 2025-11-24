@@ -7,7 +7,6 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -87,12 +86,19 @@ export const useCourseModules = (
       return;
     }
 
-    const q = query(modulesCollection, orderBy('order'));
     const unsubscribe = onSnapshot(
-      q,
+      query(modulesCollection),
       (snapshot) => {
         const next = snapshot.docs.map((docSnap, index) => {
           const data = docSnap.data();
+          const orderValue = (() => {
+            if (typeof data.order === 'number') return data.order;
+            if (typeof data.order === 'string') {
+              const parsed = Number(data.order);
+              return Number.isFinite(parsed) ? parsed : index;
+            }
+            return index;
+          })();
           return {
             id: docSnap.id,
             courseId,
@@ -101,12 +107,27 @@ export const useCourseModules = (
             body: normalizeLocaleMap(data.body),
             videoUrls: normalizeLocaleArrayMap(data.videoUrls),
             imageUrls: normalizeLocaleArrayMap(data.imageUrls),
-            order: data.order ?? index,
+            order: orderValue,
             questions: data.questions ?? [],
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           } satisfies CourseModule;
         });
+
+        next.sort((a, b) => {
+          const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
+          if (orderDiff !== 0) {
+            return orderDiff;
+          }
+          const createdDiff =
+            (a.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER) -
+            (b.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER);
+          if (createdDiff !== 0) {
+            return createdDiff;
+          }
+          return a.id.localeCompare(b.id);
+        });
+
         setModules(next);
         setError(null);
         setLoading(false);

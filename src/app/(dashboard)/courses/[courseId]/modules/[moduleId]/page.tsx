@@ -266,8 +266,13 @@ export default function CourseModuleDetailPage() {
   };
 
   const handlePreview = () => {
-    if (!courseId || !moduleId) return;
-    router.push(`/courses/${courseId}/modules/${moduleId}/preview`);
+     if (!courseId || !moduleId) return;
+    const url = `/courses/${courseId}/modules/${moduleId}/preview?lang=${activeLanguage}`;
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      router.push(url);
+    }
   };
 
   const handleDelete = async () => {
