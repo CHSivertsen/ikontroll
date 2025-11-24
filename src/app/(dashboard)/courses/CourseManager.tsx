@@ -6,7 +6,12 @@ import { useForm } from 'react-hook-form';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCourses } from '@/hooks/useCourses';
-import type { Course, CoursePayload, CourseStatus } from '@/types/course';
+import type {
+  Course,
+  CoursePayload,
+  CourseStatus,
+  LocaleStringMap,
+} from '@/types/course';
 
 type CourseFormValues = {
   title: string;
@@ -22,6 +27,13 @@ const STATUS_LABELS: Record<CourseStatus, string> = {
 const STATUS_STYLES: Record<CourseStatus, string> = {
   active: 'bg-emerald-100 text-emerald-700',
   inactive: 'bg-slate-100 text-slate-600',
+};
+
+const getLocaleValue = (map: LocaleStringMap | undefined, lang = 'no') => {
+  if (!map) return '';
+  if (map[lang]) return map[lang];
+  const firstEntry = Object.values(map).find((value) => value?.trim());
+  return firstEntry ?? '';
 };
 
 export default function CourseManager() {
@@ -41,8 +53,8 @@ export default function CourseManager() {
       const payload: CoursePayload = {
         companyId,
         createdById: profile.id,
-        title: values.title,
-        description: values.description ?? '',
+        title: { no: values.title.trim() },
+        description: { no: (values.description ?? '').trim() },
         status: values.status,
       };
       const id = await createCourse(payload);
@@ -62,7 +74,7 @@ export default function CourseManager() {
 
   const handleDeleteCourse = async (course: Course) => {
     const confirmed = window.confirm(
-      `Slett kurset "${course.title}"? Dette kan ikke angres.`,
+      `Slett kurset "${getLocaleValue(course.title)}"? Dette kan ikke angres.`,
     );
     if (!confirmed) return;
     try {
@@ -131,10 +143,12 @@ export default function CourseManager() {
                         onClick={() => handleManageCourse(course.id)}
                         className="text-left font-semibold text-slate-700 transition hover:text-slate-900"
                       >
-                        {course.title}
+                        {getLocaleValue(course.title) || 'Uten tittel'}
                       </button>
-                      {course.description && (
-                        <p className="text-xs text-slate-500">{course.description}</p>
+                      {getLocaleValue(course.description) && (
+                        <p className="text-xs text-slate-500">
+                          {getLocaleValue(course.description)}
+                        </p>
                       )}
                     </td>
                     <td className="py-3">
@@ -228,14 +242,24 @@ const CreateCourseModal = ({
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Tittel
+            <span className="flex items-center justify-between">
+              <span>Tittel</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                NO
+              </span>
+            </span>
             <input
               {...form.register('title', { required: true })}
               className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Beskrivelse
+            <span className="flex items-center justify-between">
+              <span>Beskrivelse</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                NO
+              </span>
+            </span>
             <textarea
               {...form.register('description')}
               rows={3}

@@ -14,7 +14,50 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
-import type { CourseModule, CourseModulePayload } from '@/types/course';
+import type {
+  CourseModule,
+  CourseModulePayload,
+  LocaleStringArrayMap,
+  LocaleStringMap,
+} from '@/types/course';
+const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
+  if (!value) {
+    return { no: '' };
+  }
+  if (typeof value === 'string') {
+    return { no: value };
+  }
+  if (typeof value === 'object') {
+    return value as LocaleStringMap;
+  }
+  return { no: String(value) };
+};
+
+const normalizeLocaleArrayMap = (value: unknown): LocaleStringArrayMap => {
+  if (!value) {
+    return { no: [] };
+  }
+  if (Array.isArray(value)) {
+    return { no: value.filter((item): item is string => typeof item === 'string') };
+  }
+  if (typeof value === 'object') {
+    const result: LocaleStringArrayMap = {};
+    Object.entries(value as Record<string, unknown>).forEach(([lang, entries]) => {
+      if (Array.isArray(entries)) {
+        result[lang] = entries.filter((item): item is string => typeof item === 'string');
+      } else if (typeof entries === 'string') {
+        result[lang] = [entries];
+      } else if (entries == null) {
+        result[lang] = [];
+      } else {
+        result[lang] = [String(entries)];
+      }
+    });
+    return result;
+  }
+  return { no: [String(value)] };
+};
+
 
 interface UseCourseModulesState {
   modules: CourseModule[];
@@ -53,11 +96,11 @@ export const useCourseModules = (
           return {
             id: docSnap.id,
             courseId,
-            title: data.title ?? '',
-            summary: data.summary ?? '',
-            body: data.body ?? {},
-            videoUrls: data.videoUrls ?? [],
-            imageUrls: data.imageUrls ?? [],
+            title: normalizeLocaleMap(data.title),
+            summary: normalizeLocaleMap(data.summary),
+            body: normalizeLocaleMap(data.body),
+            videoUrls: normalizeLocaleArrayMap(data.videoUrls),
+            imageUrls: normalizeLocaleArrayMap(data.imageUrls),
             order: data.order ?? index,
             questions: data.questions ?? [],
             createdAt: data.createdAt?.toDate?.() ?? undefined,

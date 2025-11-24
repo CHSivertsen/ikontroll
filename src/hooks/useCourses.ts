@@ -15,7 +15,19 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
-import type { Course, CoursePayload } from '@/types/course';
+import type { Course, CoursePayload, LocaleStringMap } from '@/types/course';
+const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
+  if (!value) {
+    return { no: '' };
+  }
+  if (typeof value === 'string') {
+    return { no: value };
+  }
+  if (typeof value === 'object') {
+    return value as LocaleStringMap;
+  }
+  return { no: String(value) };
+};
 
 interface UseCoursesState {
   courses: Course[];
@@ -60,8 +72,8 @@ export const useCourses = (
             id: docSnap.id,
             companyId: data.companyId,
             createdById: data.createdById,
-            title: data.title ?? '',
-            description: data.description ?? '',
+            title: normalizeLocaleMap(data.title),
+            description: normalizeLocaleMap(data.description),
             status: data.status ?? 'inactive',
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,

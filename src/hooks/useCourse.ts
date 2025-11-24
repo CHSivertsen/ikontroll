@@ -4,7 +4,20 @@ import { useEffect, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
-import type { Course } from '@/types/course';
+import type { Course, LocaleStringMap } from '@/types/course';
+
+const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
+  if (!value) {
+    return { no: '' };
+  }
+  if (typeof value === 'string') {
+    return { no: value };
+  }
+  if (typeof value === 'object') {
+    return value as LocaleStringMap;
+  }
+  return { no: String(value) };
+};
 
 interface UseCourseState {
   course: Course | null;
@@ -38,8 +51,9 @@ export const useCourse = (courseId: string | null): UseCourseState => {
             id: snapshot.id,
             companyId: data.companyId,
             createdById: data.createdById,
-            title: data.title ?? '',
-            description: data.description ?? '',
+            title: normalizeLocaleMap(data.title),
+            description: normalizeLocaleMap(data.description),
+            courseImageUrl: data.courseImageUrl ?? null,
             status: data.status ?? 'inactive',
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,

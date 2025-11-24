@@ -1,33 +1,57 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { useRouter } from 'next/navigation';
 import {
-  arrayUnion,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  updateDoc,
-} from 'firebase/firestore';
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from 'react';
+import { Controller, useForm } from 'react-hook-form';
+import { useRouter } from 'next/navigation';
+import { deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  DndContext,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCourse } from '@/hooks/useCourse';
 import { useCourseModules } from '@/hooks/useCourseModules';
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import {
+  CourseModule,
   CourseModulePayload,
-  CourseQuestion,
-  CourseQuestionAlternative,
+  LocaleStringArrayMap,
   LocaleStringMap,
 } from '@/types/course';
 
 const DEFAULT_LANGUAGES = ['no', 'en'];
 
 type CourseInfoFormValues = {
-  title: string;
-  description?: string;
+  title: LocaleStringMap;
+  description: LocaleStringMap;
+  courseImageUrl?: string | null;
+  courseImageFile?: FileList;
   status: 'active' | 'inactive';
+};
+
+type ModuleQuickCreateFormValues = {
+  title: string;
+  description: string;
 };
 
 const STATUS_LABELS: Record<'active' | 'inactive', string> = {
@@ -40,48 +64,145 @@ const STATUS_STYLES: Record<'active' | 'inactive', string> = {
   inactive: 'bg-slate-100 text-slate-600',
 };
 
-const generateId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2);
-
 const createEmptyLocaleMap = (languages: string[]): LocaleStringMap =>
   languages.reduce<LocaleStringMap>((acc, lang) => {
     acc[lang] = '';
     return acc;
   }, {});
 
-const createEmptyAlternative = (
-  languages: string[],
-): CourseQuestionAlternative => ({
-  id: generateId(),
-  altText: createEmptyLocaleMap(languages),
-});
-
-const createEmptyQuestion = (languages: string[]): CourseQuestion => {
-  const first = createEmptyAlternative(languages);
-  const second = createEmptyAlternative(languages);
-  return {
-    id: generateId(),
-    title: createEmptyLocaleMap(languages),
-    contentText: createEmptyLocaleMap(languages),
-    alternatives: [first, second],
-    correctAnswerId: first.id,
-  };
+const getLocaleValue = (map: LocaleStringMap | undefined, lang = 'no') => {
+  if (!map) return '';
+  if (map[lang]) return map[lang];
+  const firstEntry = Object.values(map).find((value) => value?.trim());
+  return firstEntry ?? '';
 };
 
-const createEmptyModule = (
-  order: number,
+const createEmptyLocaleArrayMap = (
   languages: string[],
-): CourseModulePayload => ({
-  title: '',
-  summary: '',
-  body: createEmptyLocaleMap(languages),
-  videoUrls: [],
-  imageUrls: [],
-  order,
-  questions: [],
-});
+): LocaleStringArrayMap =>
+  languages.reduce<LocaleStringArrayMap>((acc, lang) => {
+    acc[lang] = [];
+    return acc;
+  }, {});
+
+const SortableModuleItem = ({
+  module,
+  activeLanguage,
+  courseId,
+  onOpen,
+  onDelete,
+}: {
+  module: CourseModule;
+  activeLanguage: string;
+  courseId: string;
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+}) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: module.id });
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            className="mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:bg-slate-100 cursor-grab active:cursor-grabbing"
+            {...attributes}
+            {...listeners}
+            aria-label="Endre rekkefølge"
+            title="Endre rekkefølge"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            >
+              <path d="M5 8h14M5 12h14M5 16h14" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div
+            className="flex-1 cursor-pointer rounded-xl border border-transparent px-1 py-0.5 transition hover:border-slate-200"
+            onClick={() => onOpen(module.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onOpen(module.id);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-semibold text-slate-900">
+                  {getLocaleValue(module.title, activeLanguage) || 'Uten tittel'}
+                </h4>
+                {getLocaleValue(module.summary, activeLanguage) && (
+                  <p className="text-sm text-slate-500">
+                    {getLocaleValue(module.summary, activeLanguage)}
+                  </p>
+                )}
+                <p className="text-xs text-slate-500">
+                  {module.questions.length} kontrollspørsmål
+                </p>
+              </div>
+              <div className="mt-1 text-slate-500">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 15a3 3 0 1 0-3-3 3 3 0 0 0 3 3" />
+                  <path d="M19.4 15a2 2 0 0 0 .4 2l.1.1a1.999 1.999 0 1 1-2.83 2.83l-.1-.1a2 2 0 0 0-2-.4 2 2 0 0 0-1.4 1.9V21a2 2 0 0 1-4 0v-.2a2 2 0 0 0-1.4-1.9 2 2 0 0 0-2 .4l-.1.1a1.999 1.999 0 1 1-2.83-2.83l.1-.1a2 2 0 0 0 .4-2 2 2 0 0 0-1.9-1.4H3a2 2 0 0 1 0-4h.2a2 2 0 0 0 1.9-1.4 2 2 0 0 0-.4-2l-.1-.1a1.999 1.999 0 1 1 2.83-2.83l.1.1a2 2 0 0 0 2 .4 2 2 0 0 0 1.4-1.9V3a2 2 0 0 1 4 0v.2a2 2 0 0 0 1.4 1.9 2 2 0 0 0 2-.4l.1-.1a1.999 1.999 0 1 1 2.83 2.83l-.1.1a2 2 0 0 0-.4 2 2 2 0 0 0 1.9 1.4H21a2 2 0 0 1 0 4h-.2a2 2 0 0 0-1.9 1.4Z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onDelete(module.id)}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-red-200 text-red-600 transition hover:border-red-300 hover:bg-red-50"
+            title="Slett emne"
+            aria-label="Slett emne"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
+              <path d="M18 6L6 18" />
+              <path d="M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function CourseDetailManager({ courseId }: { courseId: string }) {
   const router = useRouter();
@@ -92,29 +213,132 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     loading: modulesLoading,
     error: modulesError,
     createModule,
-    updateModule,
     deleteModule,
   } = useCourseModules(courseId);
 
+  const [moduleItems, setModuleItems] = useState<CourseModule[]>([]);
+  const [ordering, setOrdering] = useState(false);
+  const [orderingError, setOrderingError] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
+
+  useEffect(() => {
+    const sorted = [...modules].sort(
+      (a, b) => (a.order ?? 0) - (b.order ?? 0),
+    );
+    setModuleItems(sorted);
+  }, [modules]);
+
+  const persistModuleOrder = useCallback(
+    async (items: CourseModule[]) => {
+      if (!courseId) return;
+      try {
+        setOrdering(true);
+        setOrderingError(null);
+        await Promise.all(
+          items.map((module, index) =>
+            updateDoc(doc(db, 'courses', courseId, 'modules', module.id), {
+              order: index,
+              updatedAt: serverTimestamp(),
+            }),
+          ),
+        );
+      } catch (err) {
+        setOrderingError(
+          err instanceof Error
+            ? err.message
+            : 'Kunne ikke oppdatere rekkefølgen.',
+        );
+      } finally {
+        setOrdering(false);
+      }
+    },
+    [courseId],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) {
+        return;
+      }
+
+      setModuleItems((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+          return items;
+        }
+        const reordered = arrayMove(items, oldIndex, newIndex).map((item, index) => ({
+          ...item,
+          order: index,
+        }));
+        void persistModuleOrder(reordered);
+        return reordered;
+      });
+    },
+    [persistModuleOrder],
+  );
+
+  const handleOpenModule = useCallback(
+    (id: string) => {
+      router.push(`/courses/${courseId}/modules/${id}`);
+    },
+    [router, courseId],
+  );
+
   const form = useForm<CourseInfoFormValues>({
     defaultValues: {
-      title: course?.title ?? '',
-      description: course?.description ?? '',
+      title: course?.title ?? { no: '' },
+      description: course?.description ?? { no: '' },
+      courseImageUrl: course?.courseImageUrl ?? null,
       status: course?.status ?? 'inactive',
     },
   });
 
   useEffect(() => {
     if (!course) return;
+    const mergedLanguages = Array.from(
+      new Set([
+        ...DEFAULT_LANGUAGES,
+        ...Object.keys(course.title ?? {}),
+        ...Object.keys(course.description ?? {}),
+        ...languages,
+      ]),
+    );
+    setLanguages(mergedLanguages);
+    const ensureCourseLocales = (map: LocaleStringMap | undefined) => {
+      const base = createEmptyLocaleMap(mergedLanguages);
+      if (!map) {
+        return base;
+      }
+      mergedLanguages.forEach((lang) => {
+        base[lang] = map[lang] ?? '';
+      });
+      return base;
+    };
     form.reset({
       title: course.title,
-      description: course.description ?? '',
+      description: course.description ?? { no: '' },
+      courseImageUrl: course.courseImageUrl ?? null,
       status: course.status,
     });
+    setCourseImageUrl(course.courseImageUrl ?? null);
   }, [course, form]);
 
   const [languages, setLanguages] = useState<string[]>(DEFAULT_LANGUAGES);
+  const [activeLanguage, setActiveLanguage] = useState<string>(DEFAULT_LANGUAGES[0]);
+  const [isAddingLanguage, setIsAddingLanguage] = useState(false);
   const [languageInput, setLanguageInput] = useState('');
+  const languageInputRef = useRef<HTMLInputElement | null>(null);
+  const statusValue = form.watch('status') ?? 'inactive';
+  const [courseImageUrl, setCourseImageUrl] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   useEffect(() => {
     const discovered = new Set(DEFAULT_LANGUAGES);
@@ -134,75 +358,125 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
       const union = new Set([...prev, ...discovered]);
       return Array.from(union);
     });
-  }, [modules]);
+    setCourseImageUrl(course?.courseImageUrl ?? null);
+  }, [modules, course]);
 
-  const [moduleDraft, setModuleDraft] = useState<CourseModulePayload | null>(null);
-  const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
-  const [isModuleDialogOpen, setModuleDialogOpen] = useState(false);
-  const [moduleSaving, setModuleSaving] = useState(false);
+  useEffect(() => {
+    if (!languages.includes(activeLanguage)) {
+      setActiveLanguage(languages[0] ?? DEFAULT_LANGUAGES[0]);
+    }
+  }, [languages, activeLanguage]);
+
+  useEffect(() => {
+    if (isAddingLanguage) {
+      requestAnimationFrame(() => {
+        languageInputRef.current?.focus();
+      });
+    }
+  }, [isAddingLanguage]);
+
+  useEffect(() => {
+    form.register('status');
+  }, [form]);
+
+  const handleStatusChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextStatus = event.target.value as CourseInfoFormValues['status'];
+    form.setValue('status', nextStatus, { shouldDirty: true });
+  };
+
+  const [isQuickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [quickCreateSaving, setQuickCreateSaving] = useState(false);
+  const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+
+  const uploadCourseImage = useCallback(
+    async (file: File) => {
+      if (!courseId) return null;
+      const storageRef = ref(storage, `courses/${courseId}/cover.jpg`);
+      await uploadBytes(storageRef, file);
+      return getDownloadURL(storageRef);
+    },
+    [courseId],
+  );
+
+  const removeCourseImage = useCallback(
+    async () => {
+      if (!courseId) return;
+      try {
+        const storageRef = ref(storage, `courses/${courseId}/cover.jpg`);
+        await deleteObject(storageRef);
+      } catch (err) {
+        console.warn('Failed to delete image from storage', err);
+      }
+    },
+    [courseId],
+  );
 
   const openCreateModule = () => {
-    const nextOrder =
-      modules.length > 0 ? (modules[modules.length - 1].order ?? modules.length) + 1 : 0;
-    setEditingModuleId(null);
-    setModuleDraft(createEmptyModule(nextOrder, languages));
-    setModuleDialogOpen(true);
+    setQuickCreateError(null);
+    setQuickCreateOpen(true);
   };
 
-  const ensureLocaleKeys = (map: LocaleStringMap | undefined) => {
-    const base = createEmptyLocaleMap(languages);
-    if (!map) return base;
-    return languages.reduce<LocaleStringMap>((acc, lang) => {
-      acc[lang] = map[lang] ?? '';
-      return acc;
-    }, {});
+  const closeQuickCreate = () => {
+    if (quickCreateSaving) {
+      return;
+    }
+    setQuickCreateOpen(false);
+    setQuickCreateError(null);
   };
 
-  const openEditModule = (moduleId: string) => {
-    const target = modules.find((m) => m.id === moduleId);
-    if (!target) return;
-    setEditingModuleId(moduleId);
-    setModuleDraft({
-      title: target.title,
-      summary: target.summary ?? '',
-      body: ensureLocaleKeys(target.body),
-      videoUrls: target.videoUrls ?? [],
-      imageUrls: target.imageUrls ?? [],
-      order: target.order,
-      questions: (target.questions ?? []).map((question) => ({
-        ...question,
-        title: ensureLocaleKeys(question.title),
-        contentText: ensureLocaleKeys(question.contentText),
-        alternatives: question.alternatives.map((alt) => ({
-          ...alt,
-          altText: ensureLocaleKeys(alt.altText),
-        })),
-      })),
-    });
-    setModuleDialogOpen(true);
-  };
+  const handleQuickCreateModule = async ({
+    title,
+    description,
+  }: ModuleQuickCreateFormValues): Promise<boolean> => {
+    const trimmedTitle = title.trim();
+    const trimmedDescription = description.trim();
+    if (!trimmedTitle) {
+      setQuickCreateError('Du må angi en tittel.');
+      return false;
+    }
 
-  const closeModuleDialog = () => {
-    setModuleDialogOpen(false);
-    setEditingModuleId(null);
-    setModuleDraft(null);
-  };
-
-  const handleSaveModule = async () => {
-    if (!moduleDraft) return;
     try {
-      setModuleSaving(true);
-      if (editingModuleId) {
-        await updateModule(editingModuleId, moduleDraft);
-      } else {
-        await createModule(moduleDraft);
+      setQuickCreateSaving(true);
+      setQuickCreateError(null);
+      const nextOrder =
+        moduleItems.length > 0
+          ? (moduleItems[moduleItems.length - 1].order ?? moduleItems.length) + 1
+          : 0;
+      const targetLanguages = languages.includes('no') ? languages : [...languages, 'no'];
+      if (!languages.includes('no')) {
+        setLanguages(targetLanguages);
       }
-      closeModuleDialog();
+      const titleMap = createEmptyLocaleMap(targetLanguages);
+      titleMap.no = trimmedTitle;
+      const summaryMap = createEmptyLocaleMap(targetLanguages);
+      summaryMap.no = trimmedDescription;
+      const bodyMap = createEmptyLocaleMap(targetLanguages);
+      bodyMap.no = trimmedDescription;
+      const videoMap = createEmptyLocaleArrayMap(targetLanguages);
+      const imageMap = createEmptyLocaleArrayMap(targetLanguages);
+
+      const payload: CourseModulePayload = {
+        title: titleMap,
+        summary: summaryMap,
+        body: bodyMap,
+        videoUrls: videoMap,
+        imageUrls: imageMap,
+        order: nextOrder,
+        questions: [],
+      };
+
+      const newModuleId = await createModule(payload);
+      setQuickCreateOpen(false);
+      router.push(`/courses/${courseId}/modules/${newModuleId}`);
+      return true;
     } catch (err) {
-      console.error('Failed to save module', err);
-      alert('Kunne ikke lagre emnet.');
+      console.error('Failed to create module', err);
+      setQuickCreateError(
+        err instanceof Error ? err.message : 'Kunne ikke opprette emnet.',
+      );
+      return false;
     } finally {
-      setModuleSaving(false);
+      setQuickCreateSaving(false);
     }
   };
 
@@ -210,7 +484,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     const target = modules.find((m) => m.id === moduleId);
     if (!target) return;
     const confirmed = window.confirm(
-      `Slett emnet "${target.title}"? Dette kan ikke angres.`,
+      `Slett emnet "${getLocaleValue(target.title, activeLanguage)}"? Dette kan ikke angres.`,
     );
     if (!confirmed) return;
     try {
@@ -223,48 +497,56 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
 
   const addLanguage = (lang: string) => {
     const trimmed = lang.trim().toLowerCase();
-    if (!trimmed || languages.includes(trimmed)) return;
+    if (!trimmed) return;
+    if (languages.includes(trimmed)) {
+      setLanguageInput('');
+      setIsAddingLanguage(false);
+      setActiveLanguage(trimmed);
+      return;
+    }
+
     const nextLanguages = [...languages, trimmed];
     setLanguages(nextLanguages);
     setLanguageInput('');
-
-    setModuleDraft((prev) =>
-      prev
-        ? {
-            ...prev,
-            body: {
-              ...createEmptyLocaleMap(nextLanguages),
-              ...(prev.body ?? {}),
-            },
-            questions: prev.questions.map((q) => ({
-              ...q,
-              title: {
-                ...createEmptyLocaleMap(nextLanguages),
-                ...(q.title ?? {}),
-              },
-              contentText: {
-                ...createEmptyLocaleMap(nextLanguages),
-                ...(q.contentText ?? {}),
-              },
-              alternatives: q.alternatives.map((alt) => ({
-                ...alt,
-                altText: {
-                  ...createEmptyLocaleMap(nextLanguages),
-                  ...(alt.altText ?? {}),
-                },
-              })),
-            })),
-          }
-        : prev,
+    setIsAddingLanguage(false);
+    setActiveLanguage(trimmed);
+    const ensureCourseLocales = (map: LocaleStringMap | undefined) => {
+      const base = createEmptyLocaleMap(nextLanguages);
+      if (!map) return base;
+      nextLanguages.forEach((language) => {
+        base[language] = map[language] ?? '';
+      });
+      return base;
+    };
+    form.setValue('title', ensureCourseLocales(form.getValues('title')), {
+      shouldDirty: true,
+    });
+    form.setValue(
+      'description',
+      ensureCourseLocales(form.getValues('description')),
+      { shouldDirty: true },
     );
+
   };
 
   const handleCourseInfoSave = form.handleSubmit(async (values) => {
     if (!course) return;
     try {
+      const normalizeForSave = (map: LocaleStringMap) => {
+        const base = createEmptyLocaleMap(languages);
+        Object.entries(map ?? {}).forEach(([lang, value]) => {
+          base[lang] = value ?? '';
+        });
+        return base;
+      };
+      const normalizedTitle = normalizeForSave(values.title ?? {});
+      normalizedTitle.no = normalizedTitle.no?.trim() ?? '';
+      const normalizedDescription = normalizeForSave(values.description ?? {});
+      normalizedDescription.no = normalizedDescription.no?.trim() ?? '';
       await updateDoc(doc(db, 'courses', course.id), {
-        title: values.title,
-        description: values.description ?? '',
+        title: normalizedTitle,
+        description: normalizedDescription,
+        courseImageUrl: courseImageUrl ?? null,
         status: values.status,
         updatedAt: serverTimestamp(),
       });
@@ -277,7 +559,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const handleDeleteCourse = async () => {
     if (!course) return;
     const confirmed = window.confirm(
-      `Slett kurset "${course.title}"? Dette kan ikke angres.`,
+      `Slett kurset "${getLocaleValue(course.title)}"? Dette kan ikke angres.`,
     );
     if (!confirmed) return;
     try {
@@ -289,46 +571,76 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     }
   };
 
-  const moduleList = modules.length ? (
-    <div className="space-y-4">
-      {modules.map((module) => (
-        <div
-          key={module.id}
-          className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-        >
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Emne #{module.order ?? 0}
-              </p>
-              <h4 className="text-lg font-semibold text-slate-900">
-                {module.title}
-              </h4>
-              {module.summary && (
-                <p className="text-sm text-slate-500">{module.summary}</p>
-              )}
-              <p className="text-xs text-slate-500">
-                {module.questions.length} kontrollspørsmål
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => openEditModule(module.id)}
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-              >
-                Rediger
-              </button>
-              <button
-                onClick={() => handleDeleteModule(module.id)}
-                className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-              >
-                Slett
-              </button>
-            </div>
-          </div>
+  const handlePreviewCourse = useCallback(() => {
+    if (!courseId) return;
+    router.push(`/courses/${courseId}/preview`);
+  }, [courseId, router]);
+
+  const handleCourseImageChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setUploadingImage(true);
+      setImageError(null);
+      if (courseImageUrl) {
+        await removeCourseImage();
+      }
+      const url = await uploadCourseImage(file);
+      if (url) {
+        setCourseImageUrl(url);
+        form.setValue('courseImageUrl', url, { shouldDirty: true });
+      }
+    } catch (err) {
+      console.error('Failed to upload course image', err);
+      setImageError(
+        err instanceof Error ? err.message : 'Kunne ikke laste opp bilde.',
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveCourseImage = async () => {
+    try {
+      setUploadingImage(true);
+      setImageError(null);
+      await removeCourseImage();
+      setCourseImageUrl(null);
+      form.setValue('courseImageUrl', null, { shouldDirty: true });
+    } catch (err) {
+      console.error('Failed to remove course image', err);
+      setImageError(
+        err instanceof Error ? err.message : 'Kunne ikke fjerne bilde.',
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const moduleList = moduleItems.length ? (
+    <DndContext
+      sensors={sensors}
+      modifiers={[restrictToVerticalAxis]}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext
+        items={moduleItems.map((module) => module.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div className="space-y-4">
+          {moduleItems.map((module) => (
+            <SortableModuleItem
+              key={module.id}
+              module={module}
+              activeLanguage={activeLanguage}
+              courseId={courseId}
+              onOpen={handleOpenModule}
+              onDelete={handleDeleteModule}
+            />
+          ))}
         </div>
-      ))}
-    </div>
+      </SortableContext>
+    </DndContext>
   ) : (
     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
       Ingen emner er opprettet ennå. Klikk “Nytt emne” for å komme i gang.
@@ -337,6 +649,85 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          {languages.map((lang) => (
+            <button
+              key={lang}
+              type="button"
+              onClick={() => setActiveLanguage(lang)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                activeLanguage === lang
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'border border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {lang.toUpperCase()}
+            </button>
+          ))}
+          {isAddingLanguage ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                addLanguage(languageInput);
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                ref={languageInputRef}
+                value={languageInput}
+                onChange={(e) => setLanguageInput(e.target.value)}
+                placeholder="Språkkode"
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs focus:border-slate-400 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                Legg til
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingLanguage(false);
+                  setLanguageInput('');
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:border-slate-300 hover:bg-slate-50"
+                aria-label="Avbryt"
+              >
+                ×
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingLanguage(true);
+                setLanguageInput('');
+              }}
+              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              aria-label="Legg til språk"
+            >
+              +
+            </button>
+          )}
+        </div>
+        <label
+          htmlFor="course-status-select"
+          className="flex items-center gap-2 text-sm font-medium text-slate-700"
+        >
+          <span>Status</span>
+          <select
+            id="course-status-select"
+            value={statusValue}
+            onChange={handleStatusChange}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          >
+            <option value="active">Aktiv</option>
+            <option value="inactive">Inaktiv</option>
+          </select>
+        </label>
+      </div>
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -344,7 +735,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
               Kursinformasjon
             </p>
             <h2 className="text-2xl font-semibold text-slate-900">
-              {course?.title ?? '…'}
+              {getLocaleValue(course?.title, activeLanguage) || '…'}
             </h2>
             {course?.createdAt && (
               <p className="text-xs text-slate-500">
@@ -362,32 +753,114 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
 
         <form onSubmit={handleCourseInfoSave} className="mt-4 grid gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Tittel
-            <input
-              {...form.register('title', { required: true })}
-              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            <span className="flex items-center justify-between">
+              <span>Tittel</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {activeLanguage.toUpperCase()}
+              </span>
+            </span>
+            <Controller
+              control={form.control}
+              name="title"
+              render={({ field }) => (
+                <input
+                  value={field.value?.[activeLanguage] ?? ''}
+                  onChange={(e) =>
+                    field.onChange({
+                      ...(field.value ?? createEmptyLocaleMap(languages)),
+                      [activeLanguage]: e.target.value,
+                    })
+                  }
+                  onBlur={field.onBlur}
+                  className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              )}
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Status
-            <select
-              {...form.register('status')}
-              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            >
-              <option value="active">Aktiv</option>
-              <option value="inactive">Inaktiv</option>
-            </select>
-          </label>
           <label className="md:col-span-2 flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Beskrivelse
-            <textarea
-              {...form.register('description')}
-              rows={3}
-              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            <span className="flex items-center justify-between">
+              <span>Beskrivelse</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {activeLanguage.toUpperCase()}
+              </span>
+            </span>
+            <Controller
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <textarea
+                  value={field.value?.[activeLanguage] ?? ''}
+                  onChange={(e) =>
+                    field.onChange({
+                      ...(field.value ?? createEmptyLocaleMap(languages)),
+                      [activeLanguage]: e.target.value,
+                    })
+                  }
+                  onBlur={field.onBlur}
+                  rows={3}
+                  className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              )}
             />
           </label>
 
+          <div className="md:col-span-2 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-700">Forsidebilde</p>
+                <p className="text-xs text-slate-500">
+                  Last opp et bilde som representerer kurset. Anbefalt størrelse 1200x600 px.
+                </p>
+              </div>
+              {courseImageUrl && !uploadingImage && (
+                <button
+                  type="button"
+                  onClick={handleRemoveCourseImage}
+                  className="rounded-xl border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 transition hover:border-red-300 hover:bg-red-50"
+                  disabled={uploadingImage}
+                >
+                  Fjern bilde
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:border-slate-400 hover:bg-slate-50">
+                <span>{uploadingImage ? 'Laster opp …' : 'Velg bilde'}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCourseImageChange}
+                  className="hidden"
+                  disabled={uploadingImage}
+                />
+              </label>
+              {courseImageUrl ? (
+                <div className="relative h-28 w-48 overflow-hidden rounded-xl border border-slate-200">
+                  <img
+                    src={courseImageUrl}
+                    alt="Forhåndsvisning av kursbilde"
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="flex h-28 w-48 items-center justify-center rounded-xl border border-dashed border-slate-200 text-xs text-slate-400">
+                  Ingen bilde valgt
+                </div>
+              )}
+            </div>
+            {imageError && (
+              <p className="text-xs font-semibold text-red-600">{imageError}</p>
+            )}
+          </div>
+
           <div className="md:col-span-2 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={handlePreviewCourse}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Forhåndsvis
+            </button>
             <button
               type="submit"
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
@@ -416,42 +889,6 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
           </button>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Språk
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {languages.map((lang) => (
-              <span
-                key={lang}
-                className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700"
-              >
-                {lang.toUpperCase()}
-              </span>
-            ))}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                addLanguage(languageInput);
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                value={languageInput}
-                onChange={(e) => setLanguageInput(e.target.value)}
-                placeholder="Legg til språk (f.eks. it)"
-                className="rounded-lg border border-slate-200 px-2 py-1 text-xs focus:border-slate-400 focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
-              >
-                Legg til
-              </button>
-            </form>
-          </div>
-        </div>
-
         {modulesError && (
           <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
             {modulesError}
@@ -465,422 +902,134 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
         ) : (
           <div className="mt-4">{moduleList}</div>
         )}
+        {ordering && (
+          <p className="mt-3 text-xs text-slate-400">Lagrer rekkefølgen …</p>
+        )}
+        {orderingError && (
+          <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+            {orderingError}
+          </div>
+        )}
       </div>
 
-      {isModuleDialogOpen && moduleDraft && (
-        <ModuleDialog
-          draft={moduleDraft}
-          onChange={setModuleDraft}
-          onClose={closeModuleDialog}
-          onSave={handleSaveModule}
-          languages={languages}
-          saving={moduleSaving}
+      {isQuickCreateOpen && (
+        <ModuleQuickCreateModal
+          onClose={closeQuickCreate}
+          onSubmit={handleQuickCreateModule}
+          loading={quickCreateSaving}
+          errorMessage={quickCreateError}
         />
       )}
     </div>
   );
 }
 
-const ModuleDialog = ({
-  draft,
-  onChange,
+const ModuleQuickCreateModal = ({
   onClose,
-  onSave,
-  languages,
-  saving,
+  onSubmit,
+  loading,
+  errorMessage,
 }: {
-  draft: CourseModulePayload;
-  onChange: (next: CourseModulePayload) => void;
   onClose: () => void;
-  onSave: () => Promise<void>;
-  languages: string[];
-  saving: boolean;
+  onSubmit: (values: ModuleQuickCreateFormValues) => Promise<boolean>;
+  loading: boolean;
+  errorMessage: string | null;
 }) => {
-  const updateField = <K extends keyof CourseModulePayload>(
-    key: K,
-    value: CourseModulePayload[K],
-  ) => {
-    onChange({ ...draft, [key]: value });
-  };
+  const form = useForm<ModuleQuickCreateFormValues>({
+    defaultValues: { title: '', description: '' },
+  });
+
+  const handleSubmit = form.handleSubmit(async (values) => {
+    const success = await onSubmit(values);
+    if (success) {
+      form.reset();
+    }
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-              {draft.title ? 'Rediger emne' : 'Nytt emne'}
+              Nytt emne
             </p>
             <h4 className="text-2xl font-semibold text-slate-900">
-              {draft.title || 'Emnedetaljer'}
+              Grunnleggende informasjon
             </h4>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 transition hover:text-slate-700"
+            className="text-slate-400 transition hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Lukk"
+            disabled={loading}
           >
             ×
           </button>
         </div>
 
-        <div className="mt-6 space-y-6">
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Emnetittel
+            <span className="flex items-center justify-between">
+              <span>Tittel</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                NO
+              </span>
+            </span>
             <input
-              value={draft.title}
-              onChange={(e) => updateField('title', e.target.value)}
+              {...form.register('title', { required: 'Tittel er påkrevd.' })}
               className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Gi emnet et navn"
+              autoFocus
+              disabled={loading}
             />
+            {form.formState.errors.title?.message && (
+              <p className="text-xs font-semibold text-red-600">
+                {form.formState.errors.title.message}
+              </p>
+            )}
           </label>
+
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Sammendrag
+            <span className="flex items-center justify-between">
+              <span>Beskrivelse</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                NO
+              </span>
+            </span>
             <textarea
-              value={draft.summary ?? ''}
-              onChange={(e) => updateField('summary', e.target.value)}
-              rows={3}
-              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            />
-          </label>
-
-          <LocaleFieldEditor
-            label="Tekstlig innhold"
-            value={draft.body ?? {}}
-            onChange={(next) => updateField('body', next)}
-            languages={languages}
-            multiline
-          />
-
-          <MediaListEditor
-            label="Videoer (URL)"
-            values={draft.videoUrls}
-            onChange={(next) => updateField('videoUrls', next)}
-          />
-          <MediaListEditor
-            label="Bilder (URL)"
-            values={draft.imageUrls}
-            onChange={(next) => updateField('imageUrls', next)}
-          />
-
-          <QuestionListEditor
-            questions={draft.questions}
-            onChange={(next) => updateField('questions', next)}
-            languages={languages}
-          />
-        </div>
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            disabled={saving}
-          >
-            Avbryt
-          </button>
-          <button
-            type="button"
-            onClick={onSave}
-            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
-            disabled={saving}
-          >
-            {saving ? 'Lagrer …' : 'Lagre emne'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LocaleFieldEditor = ({
-  label,
-  value,
-  onChange,
-  languages,
-  multiline,
-}: {
-  label: string;
-  value: LocaleStringMap;
-  onChange: (next: LocaleStringMap) => void;
-  languages: string[];
-  multiline?: boolean;
-}) => (
-  <div className="space-y-3">
-    <p className="text-sm font-semibold text-slate-700">{label}</p>
-    <div className="grid gap-3 md:grid-cols-2">
-      {languages.map((lang) => (
-        <label
-          key={lang}
-          className="flex flex-col gap-1 text-sm font-medium text-slate-700"
-        >
-          {lang.toUpperCase()}
-          {multiline ? (
-            <textarea
-              value={value?.[lang] ?? ''}
-              onChange={(e) =>
-                onChange({ ...value, [lang]: e.target.value })
-              }
+              {...form.register('description')}
               rows={4}
               className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Kort beskrivelse eller introduksjon"
+              disabled={loading}
             />
-          ) : (
-            <input
-              value={value?.[lang] ?? ''}
-              onChange={(e) =>
-                onChange({ ...value, [lang]: e.target.value })
-              }
-              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            />
+          </label>
+
+          {errorMessage && (
+            <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+              {errorMessage}
+            </p>
           )}
-        </label>
-      ))}
-    </div>
-  </div>
-);
 
-const MediaListEditor = ({
-  label,
-  values,
-  onChange,
-}: {
-  label: string;
-  values: string[];
-  onChange: (next: string[]) => void;
-}) => {
-  const updateValue = (index: number, value: string) => {
-    const next = [...values];
-    next[index] = value;
-    onChange(next);
-  };
-
-  const removeValue = (index: number) => {
-    onChange(values.filter((_, idx) => idx !== index));
-  };
-
-  return (
-    <div className="space-y-2">
-      <p className="text-sm font-semibold text-slate-700">{label}</p>
-      {values.map((url, index) => (
-        <div key={index} className="flex gap-2">
-          <input
-            value={url}
-            onChange={(e) => updateValue(index, e.target.value)}
-            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          />
-          <button
-            type="button"
-            onClick={() => removeValue(index)}
-            className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-          >
-            Fjern
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...values, ''])}
-        className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-      >
-        Legg til URL
-      </button>
-    </div>
-  );
-};
-
-const QuestionListEditor = ({
-  questions,
-  onChange,
-  languages,
-}: {
-  questions: CourseQuestion[];
-  onChange: (next: CourseQuestion[]) => void;
-  languages: string[];
-}) => {
-  const addQuestion = () => {
-    onChange([...questions, createEmptyQuestion(languages)]);
-  };
-
-  const updateQuestion = (index: number, question: CourseQuestion) => {
-    const next = [...questions];
-    next[index] = question;
-    onChange(next);
-  };
-
-  const removeQuestion = (index: number) => {
-    onChange(questions.filter((_, idx) => idx !== index));
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-700">
-          Kontrollspørsmål ({questions.length})
-        </p>
-        <button
-          type="button"
-          onClick={addQuestion}
-          className="rounded-xl border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-        >
-          Legg til spørsmål
-        </button>
-      </div>
-      {questions.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-          Ingen kontrollspørsmål lagt til ennå.
-        </div>
-      ) : (
-        questions.map((question, index) => (
-          <QuestionEditor
-            key={question.id}
-            index={index}
-            question={question}
-            onChange={(next) => updateQuestion(index, next)}
-            onRemove={() => removeQuestion(index)}
-            languages={languages}
-          />
-        ))
-      )}
-    </div>
-  );
-};
-
-const QuestionEditor = ({
-  question,
-  onChange,
-  onRemove,
-  languages,
-  index,
-}: {
-  question: CourseQuestion;
-  onChange: (next: CourseQuestion) => void;
-  onRemove: () => void;
-  languages: string[];
-  index: number;
-}) => {
-  const updateLocaleField = (key: 'title' | 'contentText', map: LocaleStringMap) => {
-    onChange({ ...question, [key]: map });
-  };
-
-  const addAlternative = () => {
-    onChange({
-      ...question,
-      alternatives: [...question.alternatives, createEmptyAlternative(languages)],
-    });
-  };
-
-  const updateAlternative = (altId: string, map: LocaleStringMap) => {
-    onChange({
-      ...question,
-      alternatives: question.alternatives.map((alt) =>
-        alt.id === altId ? { ...alt, altText: map } : alt,
-      ),
-    });
-  };
-
-  const removeAlternative = (altId: string) => {
-    const filtered = question.alternatives.filter((alt) => alt.id !== altId);
-    let nextCorrect = question.correctAnswerId;
-    if (nextCorrect === altId && filtered.length > 0) {
-      nextCorrect = filtered[0].id;
-    }
-    onChange({
-      ...question,
-      alternatives: filtered,
-      correctAnswerId: nextCorrect,
-    });
-  };
-
-  const updateCorrectAnswer = (altId: string) => {
-    onChange({ ...question, correctAnswerId: altId });
-  };
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Spørsmål #{index + 1}
-          </p>
-          <p className="text-xs text-slate-500">
-            {question.alternatives.length} alternativer
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-        >
-          Fjern spørsmål
-        </button>
-      </div>
-
-      <div className="mt-4 space-y-4">
-        <LocaleFieldEditor
-          label="Spørsmålstittel"
-          value={question.title}
-          onChange={(next) => updateLocaleField('title', next)}
-          languages={languages}
-        />
-        <LocaleFieldEditor
-          label="Introduksjon / beskrivende tekst"
-          value={question.contentText}
-          onChange={(next) => updateLocaleField('contentText', next)}
-          languages={languages}
-          multiline
-        />
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-700">Svaralternativer</p>
+          <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={addAlternative}
-              className="rounded-xl border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={loading}
             >
-              Legg til alternativ
+              Avbryt
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+              disabled={loading}
+            >
+              Opprett og administrer
             </button>
           </div>
-
-          {question.alternatives.map((alternative, idx) => (
-            <div
-              key={alternative.id}
-              className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-            >
-              <div className="flex items-start justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Alternativ {idx + 1}
-                </p>
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-1 text-xs font-semibold text-slate-700">
-                    <input
-                      type="radio"
-                      name={`question-${question.id}-correct`}
-                      checked={question.correctAnswerId === alternative.id}
-                      onChange={() => updateCorrectAnswer(alternative.id)}
-                    />
-                    Riktig svar
-                  </label>
-                  {question.alternatives.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeAlternative(alternative.id)}
-                      className="rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-                    >
-                      Fjern
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <LocaleFieldEditor
-                label="Alternativ tekst"
-                value={alternative.altText}
-                onChange={(next) => updateAlternative(alternative.id, next)}
-                languages={languages}
-              />
-            </div>
-          ))}
-        </div>
+        </form>
       </div>
     </div>
   );

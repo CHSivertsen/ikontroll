@@ -1,13 +1,15 @@
 export type CourseStatus = 'active' | 'inactive';
 
 export type LocaleStringMap = Record<string, string>;
+export type LocaleStringArrayMap = Record<string, string[]>;
 
 export interface Course {
   id: string;
   companyId: string;
   createdById: string;
-  title: string;
-  description?: string;
+  title: LocaleStringMap;
+  description: LocaleStringMap;
+  courseImageUrl?: string | null;
   status: CourseStatus;
   createdAt?: Date;
   updatedAt?: Date;
@@ -29,11 +31,11 @@ export interface CourseQuestion {
 export interface CourseModule {
   id: string;
   courseId: string;
-  title: string;
-  summary?: string;
+  title: LocaleStringMap;
+  summary: LocaleStringMap;
   body?: LocaleStringMap;
-  videoUrls: string[];
-  imageUrls: string[];
+  videoUrls: LocaleStringArrayMap;
+  imageUrls: LocaleStringArrayMap;
   order: number;
   questions: CourseQuestion[];
   createdAt?: Date;
