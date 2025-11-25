@@ -425,6 +425,7 @@ export default function CourseModuleDetailPage() {
               buttonLabel: 'Last opp video',
               buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'videos', file),
             }}
+            previewType="video"
           />
           <LocaleArrayEditor
             label="Bilder"
@@ -436,6 +437,7 @@ export default function CourseModuleDetailPage() {
               buttonLabel: 'Last opp bilde',
               buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'images', file),
             }}
+            previewType="image"
           />
 
           <QuestionListEditor
@@ -604,12 +606,14 @@ const LocaleArrayEditor = ({
   onChange,
   activeLanguage,
   uploadConfig,
+  previewType,
 }: {
   label: string;
   values: LocaleStringArrayMap;
   onChange: (next: LocaleStringArrayMap) => void;
   activeLanguage: string;
   uploadConfig?: LocaleArrayUploadConfig;
+  previewType?: 'image' | 'video';
 }) => {
   const activeValues = values?.[activeLanguage] ?? [];
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -688,22 +692,49 @@ const LocaleArrayEditor = ({
           {activeLanguage.toUpperCase()}
         </span>
       </div>
-      {activeValues.map((url, index) => (
-        <div key={index} className="flex gap-2">
-          <input
-            value={url}
-            onChange={(e) => updateValue(index, e.target.value)}
-            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          />
-          <button
-            type="button"
-            onClick={() => removeValue(index)}
-            className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-          >
-            Fjern
-          </button>
-        </div>
-      ))}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {activeValues.map((url, index) => (
+          <div key={index} className="space-y-2 rounded-2xl border border-slate-100 p-3">
+            {previewType === 'image' && url && (
+              <div className="flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                <img src={url} alt="Forhåndsvis bilde" className="h-full w-full object-cover" />
+              </div>
+            )}
+            {previewType === 'video' && url && (
+              <div className="flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-black">
+                {isYouTubeUrl(url) ? (
+                  <iframe
+                    src={url}
+                    title="Forhåndsvis video"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="h-full w-full"
+                  />
+                ) : (
+                  <video controls className="h-full w-full object-cover">
+                    <source src={url} />
+                    Nettleseren støtter ikke videoavspilling.
+                  </video>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={url}
+                onChange={(e) => updateValue(index, e.target.value)}
+                className="flex-1 rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+              <button
+                type="button"
+                onClick={() => removeValue(index)}
+                className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
+              >
+                Fjern
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

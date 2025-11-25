@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
+import { Dialog, Transition } from '@headlessui/react';
 
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 import { useCourseModules } from '@/hooks/useCourseModules';
@@ -71,6 +72,13 @@ export default function ConsumerModuleView({
 
   const videos = getLocalizedList(module.videoUrls, locale);
   const images = getLocalizedList(module.imageUrls, locale);
+  const mediaItems = useMemo(
+    () => [
+      ...images.map((url) => ({ url, type: 'image' as const })),
+      ...videos.map((url) => ({ url, type: 'video' as const })),
+    ],
+    [images, videos],
+  );
   const moduleTitle = getLocalizedValue(module.title, locale) || t.modules.module;
   const summary = getLocalizedValue(module.summary, locale);
   const rawBodyHtml = getLocalizedValue(module.body, locale);
@@ -92,6 +100,9 @@ export default function ConsumerModuleView({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [showCourseComplete, setShowCourseComplete] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState<{ url: string; type: 'image' | 'video' } | null>(
+    null,
+  );
   const courseCompletionAcknowledgedRef = useRef(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
@@ -276,7 +287,7 @@ export default function ConsumerModuleView({
         >
           ← {t.modules.backToOverview}
         </Link>
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+        <div className="space-y-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               {t.modules.module}
@@ -294,51 +305,56 @@ export default function ConsumerModuleView({
           <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
             {moduleTitle}
           </h1>
-          {summary && <p className="mt-3 text-base text-slate-600">{summary}</p>}
+
+          {mediaItems.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                {t.modules.mediaGallery}
+              </p>
+              <div className="flex gap-4 overflow-x-auto pb-2">
+                {mediaItems.map(({ url, type }) => {
+                  const isVideo = type === 'video';
+                  return (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => setMediaPreview({ url, type })}
+                      className="relative h-48 min-w-[260px] flex-shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 transition hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-slate-300"
+                    >
+                      {isVideo ? (
+                        isYouTubeUrl(url) ? (
+                          <iframe
+                            src={url}
+                            title="Modulvideo"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                            className="h-full w-full"
+                          />
+                        ) : (
+                          <video controls className="h-full w-full object-cover bg-black">
+                            <source src={url} />
+                            {t.modules.videoNotSupported}
+                          </video>
+                        )
+                      ) : (
+                        <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {summary && <p className="text-base text-slate-600">{summary}</p>}
         </div>
       </header>
 
-      {(images.length > 0 || videos.length > 0) && (
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
-          <h2 className="text-xl font-semibold text-slate-900">{t.modules.mediaGallery}</h2>
-          <div className="mt-4 grid gap-6 md:grid-cols-2">
-            {images.map((url) => (
-              <div
-                key={url}
-                className="relative h-56 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
-              >
-                <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
-              </div>
-            ))}
-            {videos.map((url) => (
-              <div
-                key={url}
-                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-black"
-              >
-                {isYouTubeUrl(url) ? (
-                  <iframe
-                    src={url}
-                    title="Modulvideo"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="aspect-video w-full"
-                  />
-                ) : (
-                  <video controls className="aspect-video w-full">
-                    <source src={url} />
-                    {t.modules.videoNotSupported}
-                  </video>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {bodyHtml && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+          <h2 className="text-xl font-semibold text-slate-900">{t.modules.content}</h2>
           <div
-            className="prose prose-slate max-w-none"
+            className="prose prose-slate mt-4 max-w-none"
             dangerouslySetInnerHTML={{ __html: bodyHtml }}
           />
         </section>
@@ -492,6 +508,76 @@ export default function ConsumerModuleView({
           {t.modules.noQuestionsYet}
         </div>
       )}
+
+      <Transition show={!!mediaPreview} as={Fragment}>
+        <Dialog
+          as="div"
+          className="relative z-40"
+          onClose={() => setMediaPreview(null)}
+        >
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-200"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-150"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0 bg-black/70" />
+          </Transition.Child>
+
+          <div className="fixed inset-0 overflow-y-auto">
+            <div className="flex min-h-full items-center justify-center p-4">
+              <Transition.Child
+                as={Fragment}
+                enter="ease-out duration-200"
+                enterFrom="opacity-0 scale-95"
+                enterTo="opacity-100 scale-100"
+                leave="ease-in duration-150"
+                leaveFrom="opacity-100 scale-100"
+                leaveTo="opacity-0 scale-95"
+              >
+                <Dialog.Panel className="relative w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setMediaPreview(null)}
+                    className="absolute right-4 top-4 rounded-full bg-white/80 p-2 text-slate-700 shadow hover:bg-white"
+                  >
+                    ✕
+                  </button>
+                  {mediaPreview && (
+                    <div className="max-h-[80vh] w-full overflow-hidden bg-black">
+                      {mediaPreview.type === 'video' ? (
+                        isYouTubeUrl(mediaPreview.url) ? (
+                          <iframe
+                            src={mediaPreview.url}
+                            title="Modulmedia"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                            className="h-[80vh] w-full"
+                          />
+                        ) : (
+                          <video controls className="h-[80vh] w-full object-contain bg-black">
+                            <source src={mediaPreview.url} />
+                            {t.modules.videoNotSupported}
+                          </video>
+                        )
+                      ) : (
+                        <img
+                          src={mediaPreview.url}
+                          alt="Modulbilde"
+                          className="h-[80vh] w-full object-contain bg-black"
+                        />
+                      )}
+                    </div>
+                  )}
+                </Dialog.Panel>
+              </Transition.Child>
+            </div>
+          </div>
+        </Dialog>
+      </Transition>
     </div>
   );
 }
