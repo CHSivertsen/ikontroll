@@ -69,6 +69,9 @@ export const translations = {
       finishQuiz: 'Fullfør quiz',
       nextModule: 'Neste modul',
       finishCourse: 'Fullfør kurset',
+      courseCompleteHeading: 'Gratulerer!',
+      courseCompleteDescription: (courseName: string) =>
+        `Du har fullført kurset ${courseName}.`,
       noQuestions: 'Ingen spørsmål er tilgjengelige.',
       noQuestionsYet: 'Dette emnet har ikke kontrollspørsmål ennå.',
       videoNotSupported: 'Nettleseren din støtter ikke video.',
@@ -147,6 +150,9 @@ export const translations = {
       finishQuiz: 'Finish quiz',
       nextModule: 'Next module',
       finishCourse: 'Finish course',
+      courseCompleteHeading: 'Great job!',
+      courseCompleteDescription: (courseName: string) =>
+        `You have completed the course ${courseName}.`,
       noQuestions: 'No questions available.',
       noQuestionsYet: 'This module has no quiz questions yet.',
       videoNotSupported: 'Your browser does not support video.',

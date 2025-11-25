@@ -3,15 +3,17 @@
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import {
   deleteDoc,
   doc,
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import { useCourseModule } from '@/hooks/useCourseModule';
 import type {
   CourseModulePayload,
@@ -52,6 +54,24 @@ const createEmptyLocaleArrayMap = (
     acc[lang] = [];
     return acc;
   }, {});
+
+const sanitizeFileName = (name: string) =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'fil';
+
+const buildModuleAssetPath = (
+  courseId: string,
+  moduleId: string,
+  type: 'images' | 'videos',
+  file: File,
+) => `courses/${courseId}/modules/${moduleId}/${type}/${Date.now()}-${sanitizeFileName(file.name)}`;
+
+const isYouTubeUrl = (url: string): boolean =>
+  /youtu\.be|youtube\.com/.test(url.toLowerCase());
 
 const createEmptyAlternative = (
   languages: string[],
@@ -396,16 +416,26 @@ export default function CourseModuleDetailPage() {
           />
 
           <LocaleArrayEditor
-            label="Videoer (URL)"
+            label="Videoer"
             values={draft.videoUrls}
             onChange={(next) => updateField('videoUrls', next)}
             activeLanguage={activeLanguage}
+            uploadConfig={{
+              accept: 'video/*',
+              buttonLabel: 'Last opp video',
+              buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'videos', file),
+            }}
           />
           <LocaleArrayEditor
-            label="Bilder (URL)"
+            label="Bilder"
             values={draft.imageUrls}
             onChange={(next) => updateField('imageUrls', next)}
             activeLanguage={activeLanguage}
+            uploadConfig={{
+              accept: 'image/*',
+              buttonLabel: 'Last opp bilde',
+              buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'images', file),
+            }}
           />
 
           <QuestionListEditor
@@ -509,12 +539,7 @@ const LocaleRichEditor = ({
   onChange: (next: LocaleStringMap) => void;
   activeLanguage: string;
 }) => {
-  const [localValue, setLocalValue] = useState<string>(value?.[activeLanguage] ?? '');
-
-  useEffect(() => {
-    setLocalValue(value?.[activeLanguage] ?? '');
-  }, [value, activeLanguage]);
-
+  const currentValue = value?.[activeLanguage] ?? '';
   const updateValue = (nextValue: string) => {
     const next: LocaleStringMap = { ...(value ?? {}) };
     next[activeLanguage] = nextValue;
@@ -539,7 +564,6 @@ const LocaleRichEditor = ({
   );
 
   const handleChange = (content: string) => {
-    setLocalValue(content);
     updateValue(content);
   };
 
@@ -554,7 +578,7 @@ const LocaleRichEditor = ({
       <div className="rounded-xl border border-slate-200">
         <ReactQuill
           theme="snow"
-          value={localValue}
+          value={currentValue}
           onChange={handleChange}
           modules={modulesConfig}
           formats={formats}
@@ -568,18 +592,28 @@ const LocaleRichEditor = ({
   );
 };
 
+type LocaleArrayUploadConfig = {
+  accept: string;
+  buttonLabel: string;
+  buildPath: (file: File) => string;
+};
+
 const LocaleArrayEditor = ({
   label,
   values,
   onChange,
   activeLanguage,
+  uploadConfig,
 }: {
   label: string;
   values: LocaleStringArrayMap;
   onChange: (next: LocaleStringArrayMap) => void;
   activeLanguage: string;
+  uploadConfig?: LocaleArrayUploadConfig;
 }) => {
   const activeValues = values?.[activeLanguage] ?? [];
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const updateList = (nextList: string[]) => {
     onChange({
@@ -594,8 +628,56 @@ const LocaleArrayEditor = ({
     updateList(next);
   };
 
+  const maybeDeleteUploadedFile = async (url: string) => {
+    if (!uploadConfig) return;
+    if (!url.includes('firebasestorage.googleapis.com')) return;
+    try {
+      const urlObj = new URL(url);
+      const match = urlObj.pathname.match(/\/v0\/b\/([^/]+)\/o\/(.+)/);
+      if (!match) return;
+      const [, bucket, encodedPath] = match;
+      const configuredBucket = storage.app.options?.storageBucket;
+      if (configuredBucket && bucket !== configuredBucket) {
+        return;
+      }
+      const objectPath = decodeURIComponent(encodedPath);
+      await deleteObject(ref(storage, objectPath));
+    } catch (err) {
+      console.warn('Kunne ikke slette opplastet fil', err);
+    }
+  };
+
   const removeValue = (index: number) => {
+    const target = activeValues[index];
     updateList(activeValues.filter((_, idx) => idx !== index));
+    if (target) {
+      void maybeDeleteUploadedFile(target);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (!uploadConfig) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!uploadConfig) return;
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    try {
+      const storagePath = uploadConfig.buildPath(file);
+      const storageRef = ref(storage, storagePath);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      updateList([...activeValues, url]);
+    } catch (err) {
+      console.error('Failed to upload file', err);
+      alert('Kunne ikke laste opp filen. Prøv igjen.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -622,13 +704,34 @@ const LocaleArrayEditor = ({
           </button>
         </div>
       ))}
-      <button
-        type="button"
-        onClick={() => updateList([...activeValues, ''])}
-        className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-      >
-        Legg til URL
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => updateList([...activeValues, ''])}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+        >
+          Legg til URL
+        </button>
+        {uploadConfig && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={uploadConfig.accept}
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <button
+              type="button"
+              onClick={handleUploadClick}
+              disabled={uploading}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {uploading ? 'Laster opp …' : uploadConfig.buttonLabel}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 };

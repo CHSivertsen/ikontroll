@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
 
 import { useCourseProgress } from '@/hooks/useCourseProgress';
@@ -92,6 +92,7 @@ export default function ConsumerModuleView({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [showCourseComplete, setShowCourseComplete] = useState(false);
+  const courseCompletionAcknowledgedRef = useRef(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
   const handleSelectAlternative = (questionId: string, alternativeId: string) => {
@@ -112,9 +113,11 @@ export default function ConsumerModuleView({
   };
 
   const resetQuiz = () => {
+    courseCompletionAcknowledgedRef.current = false;
     setAnswers({});
     setCurrentIndex(0);
     setShowSummary(false);
+    setShowCourseComplete(false);
   };
 
   const incorrectQuestions = useMemo(
@@ -139,7 +142,7 @@ export default function ConsumerModuleView({
           .filter(m => m.id !== module.id)
           .every(m => completedModules.includes(m.id));
           
-        if (allOtherModulesCompleted) {
+        if (allOtherModulesCompleted && !courseCompletionAcknowledgedRef.current) {
           setShowCourseComplete(true);
         }
       }).catch((err) => {
@@ -177,9 +180,45 @@ export default function ConsumerModuleView({
       startVelocity: 40,
       gravity: 1.05,
       origin: { x: 0.52, y: 0.58 },
-      colors: ['#10b981', '#34d399', '#059669', '#f8fafc'],
+        colors: ['#10b981', '#34d399', '#059669', '#f8fafc'],
     });
   }, [showCourseComplete]);
+
+  const courseOverviewHref = useMemo(
+    () => `${basePath}/${course.id}?lang=${locale}`,
+    [basePath, course.id, locale],
+  );
+
+  const acknowledgeCompletion = useCallback(() => {
+    courseCompletionAcknowledgedRef.current = true;
+    setShowSummary(false);
+    setShowCourseComplete(false);
+  }, []);
+
+  const handleReturnToCourse = useCallback(() => {
+    acknowledgeCompletion();
+    router.replace(courseOverviewHref);
+  }, [acknowledgeCompletion, router, courseOverviewHref]);
+
+  const autoRedirectedRef = useRef(false);
+
+  useEffect(() => {
+    if (!showCourseComplete) {
+      autoRedirectedRef.current = false;
+      return;
+    }
+
+    if (autoRedirectedRef.current) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      autoRedirectedRef.current = true;
+      handleReturnToCourse();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [showCourseComplete, handleReturnToCourse]);
 
   // Find next module
   const nextModuleId = useMemo(() => {
@@ -195,11 +234,6 @@ export default function ConsumerModuleView({
     }
   };
 
-  const courseOverviewHref = `${basePath}/${course.id}?lang=${locale}`;
-  const handleFinishCourse = () => {
-    router.push(courseOverviewHref);
-  };
-
   const scorePercentage = questions.length
     ? Math.round(
         ((questions.length - incorrectQuestions.length) / questions.length) * 100,
@@ -213,14 +247,18 @@ export default function ConsumerModuleView({
           <div className="text-6xl">🏆</div>
         </div>
         <div className="space-y-2">
-          <h1 className="text-3xl font-bold text-slate-900">Gratulerer!</h1>
+          <h1 className="text-3xl font-bold text-slate-900">
+            {t.modules.courseCompleteHeading}
+          </h1>
           <p className="text-lg text-slate-600">
-            Du har fullført kurset <span className="font-semibold">{getLocalizedValue(course.title, locale)}</span>.
+            {t.modules.courseCompleteDescription(
+              getLocalizedValue(course.title, locale),
+            )}
           </p>
         </div>
         <button
           type="button"
-          onClick={handleFinishCourse}
+          onClick={handleReturnToCourse}
           className="mt-4 rounded-2xl bg-slate-900 px-8 py-3 text-base font-semibold text-white transition hover:bg-slate-800"
         >
           {t.modules.backToOverview}
@@ -233,7 +271,7 @@ export default function ConsumerModuleView({
     <div className="flex flex-col gap-8 pb-12">
       <header className="space-y-6">
         <Link
-          href={`${basePath}/${course.id}?lang=${locale}`}
+          href={courseOverviewHref}
           className="text-sm font-semibold text-slate-500 transition hover:text-slate-900"
         >
           ← {t.modules.backToOverview}
