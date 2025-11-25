@@ -5,21 +5,124 @@ import { FieldValue } from 'firebase-admin/firestore';
 
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 
-const usersRoot = adminDb.collection('companies');
+const usersCollection = adminDb.collection('users');
 
-const validateBasePayload = (body: any) => {
+type CompanyUserRole = 'admin' | 'user';
+
+interface UserPayloadBody {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  roles: CompanyUserRole[];
+  status: 'active' | 'inactive';
+}
+
+interface CompanyUserPayload {
+  companyId: string;
+  customerId: string;
+  userId?: string;
+  authUid?: string;
+  user?: UserPayloadBody;
+  password?: string;
+}
+
+const validateBasePayload = (body: Partial<CompanyUserPayload> | null) => {
   const errors: string[] = [];
   if (!body?.companyId) errors.push('companyId');
   if (!body?.customerId) errors.push('customerId');
   return errors;
 };
 
+const normalizeMemberships = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return [] as { customerId: string; roles: CompanyUserRole[] }[];
+  }
+  return value
+    .map((entry) => {
+      if (
+        typeof entry === 'object' &&
+        entry !== null &&
+        'customerId' in entry &&
+        'roles' in entry
+      ) {
+        const { customerId, roles } = entry as {
+          customerId?: unknown;
+          roles?: unknown;
+        };
+        if (typeof customerId === 'string') {
+          const validRoles = Array.isArray(roles)
+            ? roles.filter(
+                (role): role is CompanyUserRole =>
+                  role === 'admin' || role === 'user',
+              )
+            : [];
+          return { customerId, roles: validRoles };
+        }
+      }
+      return null;
+    })
+    .filter(
+      (
+        membership,
+      ): membership is { customerId: string; roles: CompanyUserRole[] } =>
+        membership !== null,
+    );
+};
+
+const upsertMembership = (
+  memberships: { customerId: string; roles: CompanyUserRole[] }[],
+  customerId: string,
+  roles: CompanyUserRole[],
+) => {
+  const filteredRoles = Array.from(new Set(roles));
+  const filteredMemberships = memberships.filter(
+    (membership) => membership.customerId !== customerId,
+  );
+  filteredMemberships.push({ customerId, roles: filteredRoles });
+  return filteredMemberships;
+};
+
+const upsertUserDocument = async ({
+  authUid,
+  user,
+  companyId,
+  customerId,
+}: {
+  authUid: string;
+  user: UserPayloadBody;
+  companyId: string;
+  customerId: string;
+}) => {
+  const userDocRef = usersCollection.doc(authUid);
+  const snapshot = await userDocRef.get();
+  const existingData = snapshot.exists ? snapshot.data() : null;
+  const memberships = normalizeMemberships(existingData?.customerMemberships);
+  const nextMemberships = upsertMembership(memberships, customerId, user.roles);
+
+  await userDocRef.set(
+    {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      status: user.status,
+      authUid,
+      companyIds: FieldValue.arrayUnion(companyId),
+      customerIdRefs: FieldValue.arrayUnion(customerId),
+      customerMemberships: nextMemberships,
+      createdAt: existingData?.createdAt ?? FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+};
+
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null);
+  const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
   console.log('POST /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.user) missing.push('user');
-  if (!body?.password) missing.push('password');
 
   if (missing.length) {
     return NextResponse.json(
@@ -31,45 +134,55 @@ export async function POST(request: NextRequest) {
   const { companyId, customerId, user, password } = body;
 
   try {
-    const authUser = await adminAuth.createUser({
-      email: user.email,
-      password,
-      displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
-      disabled: user.status === 'inactive',
-    });
+    let authUser = null;
+    try {
+      authUser = await adminAuth.getUserByEmail(user.email);
+    } catch {
+      authUser = null;
+    }
 
-    const customerUsersRef = usersRoot
-      .doc(companyId)
-      .collection('customers')
-      .doc(customerId)
-      .collection('users');
+    if (!authUser) {
+      if (!password) {
+        return NextResponse.json(
+          { error: 'Brukeren finnes ikke. Passord er påkrevd for nye brukere.' },
+          { status: 400 },
+        );
+      }
+      authUser = await adminAuth.createUser({
+        email: user.email,
+        password,
+        displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
+        disabled: user.status === 'inactive',
+      });
+    } else {
+      await adminAuth.updateUser(authUser.uid, {
+        email: user.email,
+        displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
+        disabled: user.status === 'inactive',
+      });
+    }
 
-    await customerUsersRef.doc(authUser.uid).set({
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      status: user.status,
+    await upsertUserDocument({
       authUid: authUser.uid,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+      user,
+      companyId,
+      customerId,
     });
 
     return NextResponse.json({
       id: authUser.uid,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to create company user', error);
     return NextResponse.json(
-      { error: error?.message ?? 'Kunne ikke opprette bruker' },
+      { error: (error as Error)?.message ?? 'Kunne ikke opprette bruker' },
       { status: 500 },
     );
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  const body = await request.json().catch(() => null);
+  const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
   console.log('PATCH /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.userId) missing.push('userId');
@@ -86,21 +199,11 @@ export async function PATCH(request: NextRequest) {
   const authTarget = authUid ?? userId;
 
   try {
-    const customerUsersRef = usersRoot
-      .doc(companyId)
-      .collection('customers')
-      .doc(customerId)
-      .collection('users')
-      .doc(userId);
-
-    await customerUsersRef.update({
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      status: user.status,
-      updatedAt: FieldValue.serverTimestamp(),
+    await upsertUserDocument({
+      authUid: userId,
+      user,
+      companyId,
+      customerId,
     });
 
     await adminAuth.updateUser(authTarget, {
@@ -110,17 +213,17 @@ export async function PATCH(request: NextRequest) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to update company user', error);
     return NextResponse.json(
-      { error: error?.message ?? 'Kunne ikke oppdatere bruker' },
+      { error: (error as Error)?.message ?? 'Kunne ikke oppdatere bruker' },
       { status: 500 },
     );
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  const body = await request.json().catch(() => null);
+  const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
   console.log('DELETE /api/company-users payload', body);
   const missing = validateBasePayload(body);
   if (!body?.userId) missing.push('userId');
@@ -132,25 +235,48 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, userId, authUid } = body;
+  const { userId, customerId, authUid } = body;
   const authTarget = authUid ?? userId;
 
   try {
-    const userDocRef = usersRoot
-      .doc(companyId)
-      .collection('customers')
-      .doc(customerId)
-      .collection('users')
-      .doc(userId);
+    if (!customerId) {
+      return NextResponse.json(
+        { error: 'customerId mangler' },
+        { status: 400 },
+      );
+    }
 
-    await userDocRef.delete();
-    await adminAuth.deleteUser(authTarget);
+    const userDocRef = usersCollection.doc(userId);
+    const snapshot = await userDocRef.get();
+    if (!snapshot.exists) {
+      await adminAuth.deleteUser(authTarget);
+      return NextResponse.json({ ok: true });
+    }
+
+    const memberships = normalizeMemberships(snapshot.data()?.customerMemberships);
+    const remainingMemberships = memberships.filter(
+      (membership) => membership.customerId !== customerId,
+    );
+
+    if (!remainingMemberships.length) {
+      await userDocRef.delete();
+      await adminAuth.deleteUser(authTarget);
+    } else {
+      await userDocRef.set(
+        {
+          customerMemberships: remainingMemberships,
+          customerIdRefs: FieldValue.arrayRemove(customerId),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to delete company user', error);
     return NextResponse.json(
-      { error: error?.message ?? 'Kunne ikke slette bruker' },
+      { error: (error as Error)?.message ?? 'Kunne ikke slette bruker' },
       { status: 500 },
     );
   }

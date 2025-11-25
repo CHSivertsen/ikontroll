@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { startTransition, useEffect, useMemo, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
@@ -21,20 +21,25 @@ export const useCustomer = (
   const [error, setError] = useState<string | null>(null);
 
   const docRef = useMemo(() => {
-    if (!ownerCompanyId || !customerId) {
+    if (!customerId) {
       return null;
     }
-    return doc(db, 'companies', ownerCompanyId, 'customers', customerId);
-  }, [ownerCompanyId, customerId]);
+    return doc(db, 'customers', customerId);
+  }, [customerId]);
 
   useEffect(() => {
     if (!docRef) {
-      setCustomer(null);
-      setLoading(false);
+      startTransition(() => {
+        setCustomer(null);
+        setLoading(false);
+        setError(null);
+      });
       return;
     }
 
-    setLoading(true);
+    startTransition(() => {
+      setLoading(true);
+    });
     const unsubscribe = onSnapshot(
       docRef,
       (snapshot) => {
@@ -43,21 +48,31 @@ export const useCustomer = (
           setError('Fant ikke kunden.');
         } else {
           const data = snapshot.data();
-          setCustomer({
-            id: snapshot.id,
-            companyName: data.companyName ?? '',
-            address: data.address ?? '',
-            zipno: data.zipno ?? '',
-            place: data.place ?? '',
-            vatNumber: data.vatNumber ?? '',
-            status: data.status ?? 'active',
-            contactPerson: data.contactPerson ?? '',
-            contactPhone: data.contactPhone ?? '',
-            contactEmail: data.contactEmail ?? '',
-            createdAt: data.createdAt?.toDate?.() ?? undefined,
-            updatedAt: data.updatedAt?.toDate?.() ?? undefined,
-          });
-          setError(null);
+          const createdByCompanyId = data.createdByCompanyId ?? '';
+          if (ownerCompanyId && createdByCompanyId && createdByCompanyId !== ownerCompanyId) {
+            setCustomer(null);
+            setError('Du har ikke tilgang til denne kunden.');
+          } else {
+            setCustomer({
+              id: snapshot.id,
+              companyName: data.companyName ?? '',
+              address: data.address ?? '',
+              zipno: data.zipno ?? '',
+              place: data.place ?? '',
+              vatNumber: data.vatNumber ?? '',
+              status: data.status ?? 'active',
+              contactPerson: data.contactPerson ?? '',
+              contactPhone: data.contactPhone ?? '',
+              contactEmail: data.contactEmail ?? '',
+              createdByCompanyId,
+              courseIds: Array.isArray(data.courseIds)
+                ? (data.courseIds as string[])
+                : [],
+              createdAt: data.createdAt?.toDate?.() ?? undefined,
+              updatedAt: data.updatedAt?.toDate?.() ?? undefined,
+            });
+            setError(null);
+          }
         }
         setLoading(false);
       },
@@ -70,7 +85,7 @@ export const useCustomer = (
     );
 
     return () => unsubscribe();
-  }, [docRef]);
+  }, [docRef, ownerCompanyId]);
 
   return { customer, loading, error };
 };

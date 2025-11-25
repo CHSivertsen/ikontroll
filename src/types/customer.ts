@@ -11,9 +11,14 @@ export interface Customer {
   contactPerson: string;
   contactPhone: string;
   contactEmail: string;
+  createdByCompanyId: string;
+  courseIds: string[];
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-export type CustomerPayload = Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>;
+export type CustomerPayload = Omit<
+  Customer,
+  'id' | 'createdAt' | 'updatedAt' | 'createdByCompanyId' | 'courseIds'
+>;
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
+import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
 import type {
@@ -30,34 +30,68 @@ export const useCompanyUsers = (
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const usersCollection = useMemo(() => {
-    if (!ownerCompanyId || !customerId) {
-      return null;
-    }
-    return collection(
-      db,
-      'companies',
-      ownerCompanyId,
-      'customers',
-      customerId,
-      'users',
-    );
-  }, [ownerCompanyId, customerId]);
+  const usersCollection = useMemo(() => collection(db, 'users'), []);
 
   useEffect(() => {
-    if (!usersCollection) {
-      setUsers([]);
-      setLoading(false);
+    if (!customerId) {
+      startTransition(() => {
+        setUsers([]);
+        setLoading(false);
+        setError(null);
+      });
       return;
     }
 
-    setLoading(true);
-    const q = query(usersCollection, orderBy('firstName'));
+    startTransition(() => {
+      setLoading(true);
+    });
+    const q = query(
+      usersCollection,
+      where('customerIdRefs', 'array-contains', customerId),
+      orderBy('firstName'),
+    );
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
         const next: CompanyUser[] = snapshot.docs.map((docSnap) => {
           const data = docSnap.data();
+          const membershipsRaw = Array.isArray(data.customerMemberships)
+            ? data.customerMemberships
+            : [];
+          const customerMemberships = membershipsRaw
+            .map((membership: unknown) => {
+              if (
+                typeof membership === 'object' &&
+                membership !== null &&
+                'customerId' in membership &&
+                'roles' in membership
+              ) {
+                const { customerId: membershipCustomerId, roles } = membership as {
+                  customerId?: string;
+                  roles?: unknown;
+                };
+                if (typeof membershipCustomerId === 'string') {
+                  const roleList = Array.isArray(roles)
+                    ? roles.filter(
+                        (role): role is 'admin' | 'user' =>
+                          role === 'admin' || role === 'user',
+                      )
+                    : [];
+                  return {
+                    customerId: membershipCustomerId,
+                    roles: roleList,
+                  };
+                }
+              }
+              return null;
+            })
+            .filter(
+              (
+                membership,
+              ): membership is { customerId: string; roles: Array<'admin' | 'user'> } =>
+                membership !== null,
+            );
+
           return {
             id: docSnap.id,
             authUid: data.authUid ?? docSnap.id,
@@ -65,8 +99,10 @@ export const useCompanyUsers = (
             lastName: data.lastName ?? '',
             email: data.email ?? '',
             phone: data.phone ?? '',
-            role: data.role ?? 'user',
             status: data.status ?? 'active',
+            companyIds: data.companyIds ?? [],
+            customerIdRefs: data.customerIdRefs ?? [],
+            customerMemberships,
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           };
@@ -84,10 +120,10 @@ export const useCompanyUsers = (
     );
 
     return () => unsubscribe();
-  }, [usersCollection]);
+  }, [customerId, usersCollection]);
 
   const callApi = useCallback(
-    async <T,>(method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, any>) => {
+    async <T,>(method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>) => {
       console.log('company-users callApi start', { method, body });
       const response = await fetch('/api/company-users', {
         method,
@@ -103,15 +139,21 @@ export const useCompanyUsers = (
           status: response.status,
           response: text,
         });
-        let parsed: any = {};
+        let parsed: Record<string, unknown> = {};
         try {
           parsed = text ? JSON.parse(text) : {};
-        } catch (error) {
+        } catch {
           parsed = {};
         }
+        const parsedError =
+          parsed &&
+          typeof parsed === 'object' &&
+          'error' in parsed &&
+          typeof (parsed as { error?: unknown }).error === 'string'
+            ? (parsed as { error: string }).error
+            : null;
         throw new Error(
-          parsed?.error ??
-            `API-feil (${response.status}): ${text || 'Ukjent feil'}`,
+          parsedError ?? `API-feil (${response.status}): ${text || 'Ukjent feil'}`,
         );
       }
 

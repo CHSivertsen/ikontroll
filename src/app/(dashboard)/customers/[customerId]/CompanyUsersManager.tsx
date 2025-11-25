@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -18,7 +18,9 @@ const userSchema = z.object({
   lastName: z.string().min(2, 'Etternavn må være minst 2 tegn'),
   email: z.string().email('Ugyldig e-post'),
   phone: z.string().min(4, 'Telefon må fylles ut'),
-  role: z.enum(['admin', 'user']),
+  roles: z
+    .array(z.enum(['admin', 'user']))
+    .min(1, 'Velg minst én rolle'),
   status: z.enum(['active', 'inactive']),
   password: z.preprocess(
     (val) => {
@@ -37,7 +39,7 @@ const defaultValues: UserFormValues = {
   lastName: '',
   email: '',
   phone: '',
-  role: 'user',
+  roles: ['user'],
   status: 'active',
   password: '',
 };
@@ -71,20 +73,26 @@ export default function CompanyUsersManager({
     setFormError(null);
   };
 
-  const openEdit = (user: CompanyUser) => {
+  const openEdit = useCallback(
+    (user: CompanyUser) => {
     setEditingUser(user);
     form.reset({
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-      role: user.role,
+      roles:
+        user.customerMemberships.find(
+          (membership) => membership.customerId === customerId,
+        )?.roles ?? ['user'],
       status: user.status,
       password: undefined,
     });
     setIsFormOpen(true);
     setFormError(null);
-  };
+    },
+    [customerId, form],
+  );
 
   const closeForm = () => {
     setIsFormOpen(false);
@@ -123,19 +131,22 @@ export default function CompanyUsersManager({
     }
   };
 
-  const handleDelete = async (user: CompanyUser) => {
-    const confirmed = window.confirm(
-      `Slett brukeren ${user.firstName} ${user.lastName}?`,
-    );
-    if (!confirmed) return;
+  const handleDelete = useCallback(
+    async (user: CompanyUser) => {
+      const confirmed = window.confirm(
+        `Fjern ${user.firstName} ${user.lastName} fra denne kunden?`,
+      );
+      if (!confirmed) return;
 
-    try {
-      await deleteUser(user.id, user.authUid);
-    } catch (err) {
-      console.error('Failed to delete user', err);
-      alert('Kunne ikke slette brukeren.');
-    }
-  };
+      try {
+        await deleteUser(user.id, user.authUid);
+      } catch (err) {
+        console.error('Failed to delete user', err);
+        alert('Kunne ikke slette brukeren.');
+      }
+    },
+    [deleteUser],
+  );
 
   const userRows = useMemo(() => {
     if (!users.length) {
@@ -151,8 +162,17 @@ export default function CompanyUsersManager({
       );
     }
 
-    return users.map((user) => (
-      <tr key={user.id} className="border-b border-slate-100 text-sm">
+    return users.map((user) => {
+      const membership = user.customerMemberships.find(
+        (entry) => entry.customerId === customerId,
+      );
+      const membershipRoles = membership?.roles ?? [];
+      const roleLabels = membershipRoles.length
+        ? membershipRoles.map((role) => (role === 'admin' ? 'Admin' : 'Bruker')).join(', ')
+        : 'Ingen';
+
+      return (
+        <tr key={user.id} className="border-b border-slate-100 text-sm">
         <td className="py-3">
           <div className="font-semibold text-slate-900">
             {user.firstName} {user.lastName}
@@ -162,7 +182,7 @@ export default function CompanyUsersManager({
         <td className="py-3 text-slate-600">{user.phone}</td>
         <td className="py-3">
           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-            {user.role === 'admin' ? 'Admin' : 'Bruker'}
+            {roleLabels}
           </span>
         </td>
         <td className="py-3">
@@ -188,13 +208,14 @@ export default function CompanyUsersManager({
               onClick={() => handleDelete(user)}
               className="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
             >
-              Slett
+              Fjern tilgang
             </button>
           </div>
         </td>
       </tr>
-    ));
-  }, [users]);
+      );
+    });
+  }, [users, customerId, openEdit, handleDelete]);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -230,7 +251,7 @@ export default function CompanyUsersManager({
               <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="pb-2">Navn</th>
                 <th className="pb-2">Telefon</th>
-                <th className="pb-2">Rolle</th>
+                <th className="pb-2">Roller</th>
                 <th className="pb-2">Status</th>
                 <th className="pb-2 text-right">Handlinger</th>
               </tr>
@@ -333,14 +354,20 @@ export default function CompanyUsersManager({
                 </Field>
               )}
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Rolle" error={form.formState.errors.role?.message}>
-                  <select
-                    {...form.register('role')}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="user">Bruker</option>
-                  </select>
+                <Field label="Roller" error={form.formState.errors.roles?.message}>
+                  <div className="flex flex-wrap gap-4">
+                    {(['admin', 'user'] as const).map((role) => (
+                      <label key={role} className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          value={role}
+                          {...form.register('roles')}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                        />
+                        {role === 'admin' ? 'Admin' : 'Bruker'}
+                      </label>
+                    ))}
+                  </div>
                 </Field>
                 <Field
                   label="Status"

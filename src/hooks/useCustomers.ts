@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   addDoc,
   collection,
@@ -11,6 +11,7 @@ import {
   query,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
@@ -32,14 +33,23 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
 
   useEffect(() => {
     if (!companyId) {
-      setCustomers([]);
-      setLoading(false);
+      startTransition(() => {
+        setCustomers([]);
+        setLoading(false);
+        setError(null);
+      });
       return;
     }
 
-    setLoading(true);
-    const customersRef = collection(db, 'companies', companyId, 'customers');
-    const q = query(customersRef, orderBy('companyName'));
+    startTransition(() => {
+      setLoading(true);
+    });
+    const customersRef = collection(db, 'customers');
+    const q = query(
+      customersRef,
+      where('createdByCompanyId', '==', companyId),
+      orderBy('companyName'),
+    );
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -56,6 +66,10 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
             contactPerson: data.contactPerson ?? '',
             contactPhone: data.contactPhone ?? '',
             contactEmail: data.contactEmail ?? '',
+            createdByCompanyId: data.createdByCompanyId ?? '',
+            courseIds: Array.isArray(data.courseIds)
+              ? (data.courseIds as string[])
+              : [],
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           };
@@ -75,26 +89,22 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
     return () => unsubscribe();
   }, [companyId]);
 
-  const customersRef = useMemo(() => {
-    if (!companyId) {
-      return null;
-    }
-    return collection(db, 'companies', companyId, 'customers');
-  }, [companyId]);
+  const customersCollection = useMemo(() => collection(db, 'customers'), []);
 
   const createCustomer = useCallback(
     async (payload: CustomerPayload) => {
-      if (!customersRef) {
+      if (!companyId) {
         throw new Error('Company is not selected');
       }
 
-      await addDoc(customersRef, {
+      await addDoc(customersCollection, {
         ...payload,
+        createdByCompanyId: companyId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     },
-    [customersRef],
+    [companyId, customersCollection],
   );
 
   const updateCustomer = useCallback(
@@ -103,7 +113,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
         throw new Error('Company is not selected');
       }
 
-      const customerRef = doc(db, 'companies', companyId, 'customers', id);
+      const customerRef = doc(db, 'customers', id);
       await updateDoc(customerRef, {
         ...payload,
         updatedAt: serverTimestamp(),
@@ -118,7 +128,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
         throw new Error('Company is not selected');
       }
 
-      const customerRef = doc(db, 'companies', companyId, 'customers', id);
+      const customerRef = doc(db, 'customers', id);
       await deleteDoc(customerRef);
     },
     [companyId],

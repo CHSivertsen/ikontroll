@@ -1,6 +1,11 @@
 export type CompanyUserRole = 'admin' | 'user';
 export type CompanyUserStatus = 'active' | 'inactive';
 
+export interface CustomerMembership {
+  customerId: string;
+  roles: CompanyUserRole[];
+}
+
 export interface CompanyUser {
   id: string;
   authUid?: string;
@@ -8,14 +13,20 @@ export interface CompanyUser {
   lastName: string;
   email: string;
   phone: string;
-  role: CompanyUserRole;
   status: CompanyUserStatus;
+  companyIds?: string[];
+  customerIdRefs?: string[];
+  customerMemberships: CustomerMembership[];
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-export type CompanyUserPayload = Omit<
-  CompanyUser,
-  'id' | 'authUid' | 'createdAt' | 'updatedAt'
->;
+export interface CompanyUserPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  roles: CompanyUserRole[];
+  status: CompanyUserStatus;
+}
 

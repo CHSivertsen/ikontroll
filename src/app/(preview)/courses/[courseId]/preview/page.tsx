@@ -173,11 +173,8 @@ export default function CoursePreviewPage({
     error: modulesError,
   } = useCourseModules(courseId);
 
-  const sortedModules = useMemo(
-    () =>
-      [...modules].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
-    [modules],
-  );
+  // modules are already sorted by useCourseModules hook
+  const sortedModules = modules;
 
   const availableLocales = useMemo(() => {
     const set = new Set<string>();
