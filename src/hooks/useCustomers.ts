@@ -6,6 +6,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -21,7 +22,7 @@ interface UseCustomersState {
   customers: Customer[];
   loading: boolean;
   error: string | null;
-  createCustomer: (payload: CustomerPayload) => Promise<void>;
+  createCustomer: (payload: CustomerPayload) => Promise<string>;
   updateCustomer: (id: string, payload: CustomerPayload) => Promise<void>;
   deleteCustomer: (id: string) => Promise<void>;
 }
@@ -90,6 +91,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
   }, [companyId]);
 
   const customersCollection = useMemo(() => collection(db, 'customers'), []);
+  const usersCollection = useMemo(() => collection(db, 'users'), []);
 
   const createCustomer = useCallback(
     async (payload: CustomerPayload) => {
@@ -97,12 +99,14 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
         throw new Error('Company is not selected');
       }
 
-      await addDoc(customersCollection, {
+      const docRef = await addDoc(customersCollection, {
         ...payload,
+        courseIds: [],
         createdByCompanyId: companyId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      return docRef.id;
     },
     [companyId, customersCollection],
   );
@@ -130,8 +134,35 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
 
       const customerRef = doc(db, 'customers', id);
       await deleteDoc(customerRef);
+      const userQuery = query(
+        usersCollection,
+        where('customerIdRefs', 'array-contains', id),
+      );
+      const usersSnapshot = await getDocs(userQuery);
+      await Promise.all(
+        usersSnapshot.docs.map(async (docSnap) => {
+          const data = docSnap.data();
+          const memberships = Array.isArray(data.customerMemberships)
+            ? data.customerMemberships
+            : [];
+          const filteredMemberships = memberships.filter(
+            (membership: unknown) =>
+              typeof membership === 'object' &&
+              membership !== null &&
+              'customerId' in membership &&
+              (membership as { customerId?: string }).customerId !== id,
+          );
+          await updateDoc(doc(db, 'users', docSnap.id), {
+            customerMemberships: filteredMemberships,
+            customerIdRefs: (data.customerIdRefs ?? []).filter(
+              (customerIdRef: unknown) => customerIdRef !== id,
+            ),
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
     },
-    [companyId],
+    [companyId, usersCollection],
   );
 
   return {

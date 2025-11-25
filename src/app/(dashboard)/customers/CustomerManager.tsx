@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -18,6 +18,36 @@ type BrregSuggestion = {
   city: string;
 };
 
+const splitContactName = (fullName: string) => {
+  const trimmed = fullName.trim();
+  if (!trimmed) {
+    return { firstName: 'Kontakt', lastName: 'Person' };
+  }
+  const [firstName, ...rest] = trimmed.split(/\s+/);
+  return {
+    firstName,
+    lastName: rest.length ? rest.join(' ') : firstName,
+  };
+};
+
+const extractApiErrorMessage = async (response: Response) => {
+  const text = await response.text();
+  try {
+    const data = text ? (JSON.parse(text) as { error?: string }) : null;
+    if (data?.error) {
+      return data.error;
+    }
+  } catch {
+    // ignore JSON parse errors
+  }
+  return text || `Serverfeil (${response.status})`;
+};
+
+const passwordSchema = z
+  .string()
+  .min(8, 'Passord må være minst 8 tegn')
+  .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, 'Passord må inneholde både bokstaver og tall');
+
 const customerSchema = z.object({
   companyName: z.string().min(2, 'Firmanavn må være minst 2 tegn'),
   address: z.string().min(2, 'Adresse må fylles ut'),
@@ -28,6 +58,12 @@ const customerSchema = z.object({
   contactPerson: z.string().min(2, 'Kontaktperson må fylles ut'),
   contactPhone: z.string().min(4, 'Telefon må fylles ut'),
   contactEmail: z.string().email('Ugyldig e-postadresse'),
+  contactPassword: z
+    .preprocess(
+      (val) => (typeof val === 'string' ? val.trim() : undefined),
+      passwordSchema,
+    )
+    .optional(),
 });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
@@ -42,6 +78,7 @@ const defaultValues: CustomerFormValues = {
   contactPerson: '',
   contactPhone: '',
   contactEmail: '',
+  contactPassword: '',
 };
 
 const statusBadges: Record<string, string> = {
@@ -77,6 +114,45 @@ export default function CustomerManager() {
     defaultValues,
   });
   const companyNameValue = form.watch('companyName');
+
+  const createContactAdminUser = useCallback(
+    async (
+      customerId: string,
+      password: string,
+      values: CustomerFormValues,
+    ) => {
+      if (!companyId) {
+        throw new Error('Ingen systemeier er valgt.');
+      }
+      const trimmedPassword = password.trim();
+      if (!trimmedPassword) {
+        throw new Error('Passord for kontaktperson må fylles ut.');
+      }
+      const { firstName, lastName } = splitContactName(values.contactPerson);
+      const response = await fetch('/api/company-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId,
+          customerId,
+          user: {
+            firstName,
+            lastName,
+            email: values.contactEmail,
+            phone: values.contactPhone,
+            roles: ['admin'],
+            status: 'active',
+          },
+          password: trimmedPassword,
+        }),
+      });
+      if (!response.ok) {
+        const message = await extractApiErrorMessage(response);
+        throw new Error(message ?? 'Kunne ikke opprette kontaktperson.');
+      }
+    },
+    [companyId],
+  );
 
   useEffect(() => {
     if (!isFormOpen) {
@@ -185,25 +261,29 @@ export default function CustomerManager() {
     });
   };
 
-  const openEdit = (customer: Customer) => {
-    skipLookupRef.current = true;
-    setEditingCustomer(customer);
-    form.reset({
-      companyName: customer.companyName,
-      address: customer.address,
-      zipno: customer.zipno,
-      place: customer.place,
-      vatNumber: customer.vatNumber,
-      status: customer.status,
-      contactPerson: customer.contactPerson,
-      contactPhone: customer.contactPhone,
-      contactEmail: customer.contactEmail,
-    });
-    setIsFormOpen(true);
-    setFormError(null);
-    setSuggestions([]);
-    setShowSuggestions(false);
-  };
+  const openEdit = useCallback(
+    (customer: Customer) => {
+      skipLookupRef.current = true;
+      setEditingCustomer(customer);
+      form.reset({
+        companyName: customer.companyName,
+        address: customer.address,
+        zipno: customer.zipno,
+        place: customer.place,
+        vatNumber: customer.vatNumber,
+        status: customer.status,
+        contactPerson: customer.contactPerson,
+        contactPhone: customer.contactPhone,
+        contactEmail: customer.contactEmail,
+        contactPassword: '',
+      });
+      setIsFormOpen(true);
+      setFormError(null);
+      setSuggestions([]);
+      setShowSuggestions(false);
+    },
+    [form],
+  );
 
   const closeForm = () => {
     if (busy) return;
@@ -215,42 +295,64 @@ export default function CustomerManager() {
   };
 
   const onSubmit = async (values: CustomerFormValues) => {
+    const { contactPassword, ...customerValues } = values;
     try {
       setBusy(true);
       setFormError(null);
       const payload: CustomerPayload = {
-        ...values,
+        ...customerValues,
       };
 
       if (editingCustomer) {
         await updateCustomer(editingCustomer.id, payload);
       } else {
-        await createCustomer(payload);
+        if (!contactPassword?.trim()) {
+          setFormError('Kontaktpersonens passord må fylles ut.');
+          setBusy(false);
+          return;
+        }
+        let createdCustomerId: string | null = null;
+        try {
+          createdCustomerId = await createCustomer(payload);
+          await createContactAdminUser(createdCustomerId, contactPassword, values);
+        } catch (err) {
+          if (createdCustomerId) {
+            await deleteCustomer(createdCustomerId).catch((deleteErr) =>
+              console.error('Kunne ikke rulle tilbake opprettet kunde', deleteErr),
+            );
+          }
+          throw err;
+        }
       }
       setIsFormOpen(false);
       setEditingCustomer(null);
       form.reset(defaultValues);
     } catch (err) {
       console.error('Failed to save customer', err);
-      setFormError('Kunne ikke lagre kunden. Prøv igjen.');
+      setFormError(
+        err instanceof Error ? err.message : 'Kunne ikke lagre kunden. Prøv igjen.',
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const handleDelete = async (customer: Customer) => {
-    const confirmed = window.confirm(
-      `Slett ${customer.companyName}? Dette kan ikke angres.`,
-    );
-    if (!confirmed) return;
+  const handleDelete = useCallback(
+    async (customer: Customer) => {
+      const confirmed = window.confirm(
+        `Slett ${customer.companyName}? Dette kan ikke angres.`,
+      );
+      if (!confirmed) return;
 
-    try {
-      await deleteCustomer(customer.id);
-    } catch (err) {
-      console.error('Failed to delete customer', err);
-      alert('Kunne ikke slette kunden.');
-    }
-  };
+      try {
+        await deleteCustomer(customer.id);
+      } catch (err) {
+        console.error('Failed to delete customer', err);
+        alert('Kunne ikke slette kunden.');
+      }
+    },
+    [deleteCustomer],
+  );
 
   const tableRows = useMemo(() => {
     if (!customers.length) {
@@ -335,7 +437,7 @@ export default function CustomerManager() {
         </td>
       </tr>
     ));
-  }, [customers]);
+  }, [customers, openEdit, handleDelete]);
 
   if (!companyId) {
     return (
@@ -570,6 +672,18 @@ export default function CustomerManager() {
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   />
                 </Field>
+                {!editingCustomer && (
+                  <Field
+                    label="Passord for kontaktperson"
+                    error={form.formState.errors.contactPassword?.message}
+                  >
+                    <input
+                      type="text"
+                      {...form.register('contactPassword')}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </Field>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-3">
