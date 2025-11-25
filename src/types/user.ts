@@ -1,3 +1,5 @@
+import type { CustomerMembership } from './companyUser';
+
 export type CompanyRole = 'admin' | 'editor' | 'viewer';
 
 export interface CompanyMembership {
@@ -12,5 +14,6 @@ export interface PortalUser {
   firstName: string;
   lastName: string;
   companyIds: CompanyMembership[];
+  customerMemberships?: CustomerMembership[];
 }
 

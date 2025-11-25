@@ -13,7 +13,11 @@ interface UseCompanyUsersState {
   users: CompanyUser[];
   loading: boolean;
   error: string | null;
-  createUser: (payload: CompanyUserPayload, password: string) => Promise<void>;
+  createUser: (
+    payload: CompanyUserPayload,
+    password: string,
+    customerName?: string,
+  ) => Promise<void>;
   updateUser: (
     id: string,
     payload: CompanyUserPayload,
@@ -69,6 +73,7 @@ export const useCompanyUsers = (
                 const { customerId: membershipCustomerId, roles } = membership as {
                   customerId?: string;
                   roles?: unknown;
+                  customerName?: unknown;
                 };
                 if (typeof membershipCustomerId === 'string') {
                   const roleList = Array.isArray(roles)
@@ -79,6 +84,11 @@ export const useCompanyUsers = (
                     : [];
                   return {
                     customerId: membershipCustomerId,
+                    customerName:
+                      typeof (membership as { customerName?: unknown }).customerName ===
+                      'string'
+                        ? ((membership as { customerName: string }).customerName)
+                        : undefined,
                     roles: roleList,
                   };
                 }
@@ -165,7 +175,7 @@ export const useCompanyUsers = (
   );
 
   const createUser = useCallback(
-    async (payload: CompanyUserPayload, password: string) => {
+    async (payload: CompanyUserPayload, password: string, customerName?: string) => {
       if (!ownerCompanyId || !customerId) {
         throw new Error('Company is not selected');
       }
@@ -175,13 +185,19 @@ export const useCompanyUsers = (
         customerId,
         user: payload,
         password,
+        customerName,
       });
     },
     [callApi, ownerCompanyId, customerId],
   );
 
   const updateUser = useCallback(
-    async (id: string, payload: CompanyUserPayload, authUid?: string) => {
+    async (
+      id: string,
+      payload: CompanyUserPayload,
+      authUid?: string,
+      customerName?: string,
+    ) => {
       if (!ownerCompanyId || !customerId) {
         throw new Error('Company is not selected');
       }
@@ -192,6 +208,7 @@ export const useCompanyUsers = (
         userId: id,
         authUid: authUid ?? id,
         user: payload,
+        customerName,
       });
     },
     [ownerCompanyId, customerId, callApi],

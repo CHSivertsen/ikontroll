@@ -92,11 +92,12 @@ export default function CustomerDetailsPage() {
             </dl>
           </div>
 
-          <CourseAssignmentsCard companyId={companyId} customer={customer} />
+          <CourseAssignmentsCard companyId={companyId ?? customer.createdByCompanyId} customer={customer} />
 
           <CompanyUsersManager
-            ownerCompanyId={companyId}
+            ownerCompanyId={customer.createdByCompanyId}
             customerId={customer.id}
+            customerName={customer.companyName}
           />
         </>
       )}

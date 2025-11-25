@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { CompanyPicker } from '@/components/CompanyPicker';
+import { CustomerPicker } from '@/components/CustomerPicker';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 import { useAuth } from '@/context/AuthContext';
@@ -14,7 +15,15 @@ export default function DashboardLayout({
 }: {
   children: ReactNode;
 }) {
-  const { firebaseUser, profile, loading } = useAuth();
+  const {
+    firebaseUser,
+    profile,
+    loading,
+    isSystemOwner,
+    isCustomerAdmin,
+    activeCustomerId,
+    customerMemberships,
+  } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -38,27 +47,32 @@ export default function DashboardLayout({
     );
   }
 
-  if (firebaseUser && profile) {
-    const hasAdminAccess = profile.companyIds.some((company) =>
-      company.roles.includes('admin'),
-    );
+  const hasAccess = isSystemOwner || isCustomerAdmin;
 
-    if (!hasAdminAccess) {
-      return (
-        <div className="flex h-screen flex-col items-center justify-center bg-slate-50 text-center">
-          <Topbar />
-          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-            <p className="text-xl font-semibold text-slate-900">
-              Ingen administratortilganger
-            </p>
-            <p className="max-w-md text-sm text-slate-500">
-              Vi finner ingen selskaper der denne brukeren er administrator. Ta
-              kontakt med systemeier for å få tilgang.
-            </p>
-          </div>
+  if (firebaseUser && profile && !hasAccess) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-slate-50 text-center">
+        <Topbar />
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <p className="text-xl font-semibold text-slate-900">
+            Ingen administratortilganger
+          </p>
+          <p className="max-w-md text-sm text-slate-500">
+            Vi finner ingen kunder eller selskaper der denne brukeren er administrator. Ta
+            kontakt med systemeier for å få tilgang.
+          </p>
         </div>
-      );
-    }
+      </div>
+    );
+  }
+
+  if (isCustomerAdmin && customerMemberships.length > 0 && !activeCustomerId) {
+    return (
+      <div className="flex h-screen flex-col bg-slate-50">
+        <Topbar />
+        <CustomerPicker />
+      </div>
+    );
   }
 
   return (
@@ -68,7 +82,8 @@ export default function DashboardLayout({
         <Sidebar />
         <main className="flex-1 overflow-auto bg-slate-50 p-6">{children}</main>
       </div>
-      <CompanyPicker />
+      {isSystemOwner && <CompanyPicker />}
+      {isCustomerAdmin && <CustomerPicker />}
     </div>
   );
 }

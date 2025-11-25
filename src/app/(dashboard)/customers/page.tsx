@@ -1,8 +1,30 @@
 'use client';
 
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+
+import { useAuth } from '@/context/AuthContext';
+
 import CustomerManager from './CustomerManager';
 
 export default function CustomersPage() {
+  const { isSystemOwner, isCustomerAdmin, activeCustomerId, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !isSystemOwner && isCustomerAdmin && activeCustomerId) {
+      router.replace(`/customers/${activeCustomerId}`);
+    }
+  }, [activeCustomerId, isCustomerAdmin, isSystemOwner, loading, router]);
+
+  if (!isSystemOwner) {
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+        Denne siden er kun tilgjengelig for systemeiere.
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-6">
       <div>

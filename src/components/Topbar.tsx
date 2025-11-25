@@ -2,13 +2,23 @@
 
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { useAuth } from '@/context/AuthContext';
+import { useCustomer } from '@/hooks/useCustomer';
 
 type MenuPosition = { top: number; right: number };
 
 export const Topbar = () => {
-  const { profile, logout } = useAuth();
+  const {
+    profile,
+    logout,
+    isCustomerAdmin,
+    customerMemberships,
+    activeCustomerId,
+  } = useAuth();
+  const router = useRouter();
+  const { customer: activeCustomer } = useCustomer(null, activeCustomerId ?? null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<MenuPosition | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -75,6 +85,14 @@ export const Topbar = () => {
     await logout();
   };
 
+  const handleGoToAccount = () => {
+    if (activeCustomerId) {
+      router.push(`/customers/${activeCustomerId}`);
+      setOpen(false);
+      setPosition(null);
+    }
+  };
+
   const menu =
     open && position && typeof document !== 'undefined'
       ? createPortal(
@@ -89,6 +107,14 @@ export const Topbar = () => {
               </p>
               <p className="text-xs text-slate-500">{profile?.email}</p>
             </div>
+            {isCustomerAdmin && activeCustomerId && (
+              <button
+                onClick={handleGoToAccount}
+                className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Min konto
+              </button>
+            )}
             <button
               onClick={handleLogout}
               className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -103,9 +129,24 @@ export const Topbar = () => {
   return (
     <>
       <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6">
-        <span className="text-lg font-semibold tracking-wide text-slate-900">
-          IKontroll
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-lg font-semibold tracking-wide text-slate-900">
+            IKontroll
+          </span>
+          {isCustomerAdmin && customerMemberships.length > 0 && (
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <span>|</span>
+              <span className="font-semibold text-slate-900">
+                {activeCustomer?.companyName ??
+                  customerMemberships.find(
+                    (membership) => membership.customerId === activeCustomerId,
+                  )?.customerName ??
+                  activeCustomerId ??
+                  'Velg kunde'}
+              </span>
+            </div>
+          )}
+        </div>
 
         <button
           ref={buttonRef}

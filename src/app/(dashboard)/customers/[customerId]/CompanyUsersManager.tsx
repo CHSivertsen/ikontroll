@@ -47,11 +47,13 @@ const defaultValues: UserFormValues = {
 interface Props {
   ownerCompanyId: string;
   customerId: string;
+  customerName: string;
 }
 
 export default function CompanyUsersManager({
   ownerCompanyId,
   customerId,
+  customerName,
 }: Props) {
   const { users, loading, error, createUser, updateUser, deleteUser } =
     useCompanyUsers(ownerCompanyId, customerId);
@@ -107,7 +109,7 @@ export default function CompanyUsersManager({
       const { password, ...rest } = values;
       if (editingUser) {
         console.log('Updating user...', { id: editingUser.id, payload: rest });
-        await updateUser(editingUser.id, rest, editingUser.authUid);
+        await updateUser(editingUser.id, rest, editingUser.authUid, customerName);
         console.log('Update completed');
         closeForm();
       } else {
@@ -116,7 +118,7 @@ export default function CompanyUsersManager({
           setBusy(false);
           return;
         }
-        await createUser(rest, password);
+        await createUser(rest, password, customerName);
         closeForm();
       }
     } catch (err) {

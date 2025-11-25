@@ -135,6 +135,7 @@ export default function CustomerManager() {
         body: JSON.stringify({
           companyId,
           customerId,
+          customerName: values.companyName,
           user: {
             firstName,
             lastName,

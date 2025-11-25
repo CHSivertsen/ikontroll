@@ -3,6 +3,7 @@ export type CompanyUserStatus = 'active' | 'inactive';
 
 export interface CustomerMembership {
   customerId: string;
+  customerName?: string;
   roles: CompanyUserRole[];
 }
 

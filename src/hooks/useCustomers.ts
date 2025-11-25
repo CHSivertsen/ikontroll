@@ -3,6 +3,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   addDoc,
+  arrayRemove,
   collection,
   deleteDoc,
   doc,
@@ -154,9 +155,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
           );
           await updateDoc(doc(db, 'users', docSnap.id), {
             customerMemberships: filteredMemberships,
-            customerIdRefs: (data.customerIdRefs ?? []).filter(
-              (customerIdRef: unknown) => customerIdRef !== id,
-            ),
+            customerIdRefs: arrayRemove(id),
             updatedAt: serverTimestamp(),
           });
         }),

@@ -21,6 +21,7 @@ interface UserPayloadBody {
 interface CompanyUserPayload {
   companyId: string;
   customerId: string;
+  customerName?: string;
   userId?: string;
   authUid?: string;
   user?: UserPayloadBody;
@@ -71,15 +72,16 @@ const normalizeMemberships = (value: unknown) => {
 };
 
 const upsertMembership = (
-  memberships: { customerId: string; roles: CompanyUserRole[] }[],
+  memberships: { customerId: string; customerName?: string; roles: CompanyUserRole[] }[],
   customerId: string,
+  customerName: string | undefined,
   roles: CompanyUserRole[],
 ) => {
   const filteredRoles = Array.from(new Set(roles));
   const filteredMemberships = memberships.filter(
     (membership) => membership.customerId !== customerId,
   );
-  filteredMemberships.push({ customerId, roles: filteredRoles });
+  filteredMemberships.push({ customerId, customerName, roles: filteredRoles });
   return filteredMemberships;
 };
 
@@ -88,17 +90,19 @@ const upsertUserDocument = async ({
   user,
   companyId,
   customerId,
+  customerName,
 }: {
   authUid: string;
   user: UserPayloadBody;
   companyId: string;
   customerId: string;
+  customerName?: string;
 }) => {
   const userDocRef = usersCollection.doc(authUid);
   const snapshot = await userDocRef.get();
   const existingData = snapshot.exists ? snapshot.data() : null;
   const memberships = normalizeMemberships(existingData?.customerMemberships);
-  const nextMemberships = upsertMembership(memberships, customerId, user.roles);
+  const nextMemberships = upsertMembership(memberships, customerId, customerName, user.roles);
 
   await userDocRef.set(
     {
@@ -131,7 +135,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, user, password } = body;
+  const { companyId, customerId, customerName, user, password } = body;
 
   try {
     let authUser = null;
@@ -167,6 +171,7 @@ export async function POST(request: NextRequest) {
       user,
       companyId,
       customerId,
+      customerName,
     });
 
     return NextResponse.json({
@@ -195,7 +200,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, userId, user, authUid } = body;
+  const { companyId, customerId, customerName, userId, user, authUid } = body;
   const authTarget = authUid ?? userId;
 
   try {
@@ -204,6 +209,7 @@ export async function PATCH(request: NextRequest) {
       user,
       companyId,
       customerId,
+      customerName,
     });
 
     await adminAuth.updateUser(authTarget, {
