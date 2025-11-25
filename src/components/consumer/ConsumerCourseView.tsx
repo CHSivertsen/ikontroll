@@ -13,6 +13,7 @@ import {
   getLocalizedValue,
   getPreferredLocale,
 } from '@/utils/localization';
+import { getTranslation } from '@/utils/translations';
 
 interface ConsumerCourseViewProps {
   course: Course;
@@ -21,101 +22,6 @@ interface ConsumerCourseViewProps {
   error?: string | null;
   basePath?: string; // e.g. '/courses' or '/my-courses'
 }
-
-const getModulesHeading = (locale: string): string => {
-  switch (locale) {
-    case 'en':
-      return 'Modules in this course';
-    case 'it':
-      return 'Moduli del corso';
-    case 'sv':
-      return 'Moduler i kursen';
-    default:
-      return 'Emner i kurset';
-  }
-};
-
-const getCourseProgressLabel = (locale: string): string => {
-  switch (locale) {
-    case 'en':
-      return 'Course progress';
-    case 'it':
-      return 'Progresso del corso';
-    case 'sv':
-      return 'Kursprogression';
-    default:
-      return 'Kursfremdrift';
-  }
-};
-
-const getCourseProgressSummary = (
-  locale: string,
-  completed: number,
-  total: number,
-): string => {
-  if (!total) {
-    switch (locale) {
-      case 'en':
-        return 'No modules available yet.';
-      case 'it':
-        return 'Nessun modulo disponibile.';
-      case 'sv':
-        return 'Inga moduler tillgängliga ännu.';
-      default:
-        return 'Ingen emner tilgjengelig ennå.';
-    }
-  }
-
-  switch (locale) {
-    case 'en':
-      return `${completed} of ${total} modules completed`;
-    case 'it':
-      return `${completed} di ${total} moduli completati`;
-    case 'sv':
-      return `${completed} av ${total} moduler slutförda`;
-    default:
-      return `${completed} av ${total} emner fullført`;
-  }
-};
-
-const getModuleStatusLabel = (locale: string, isComplete: boolean): string => {
-  if (isComplete) {
-    switch (locale) {
-      case 'en':
-        return 'Completed';
-      case 'it':
-        return 'Completato';
-      case 'sv':
-        return 'Slutförd';
-      default:
-        return 'Fullført';
-    }
-  }
-
-  switch (locale) {
-    case 'en':
-      return 'Not started';
-    case 'it':
-      return 'Non iniziato';
-    case 'sv':
-      return 'Inte påbörjad';
-    default:
-      return 'Ikke påbegynt';
-  }
-};
-
-const getLastUpdatedLabel = (locale: string): string => {
-  switch (locale) {
-    case 'en':
-      return 'Last updated';
-    case 'it':
-      return 'Ultimo aggiornamento';
-    case 'sv':
-      return 'Senast uppdaterad';
-    default:
-      return 'Sist oppdatert';
-  }
-};
 
 export default function ConsumerCourseView({
   course,
@@ -148,6 +54,8 @@ export default function ConsumerCourseView({
     [availableLocales, requestedLang],
   );
 
+  const t = getTranslation(locale);
+
   const description = getLocalizedValue(course?.description, locale);
   const updatedAt = course?.updatedAt ?? course?.createdAt;
   const { completedModules, loading: progressLoading } = useCourseProgress(course.id);
@@ -158,9 +66,12 @@ export default function ConsumerCourseView({
   const courseProgressPercent = totalModules
     ? Math.round((completedCount / totalModules) * 100)
     : 0;
+  
   const progressSummary = progressLoading
     ? '…'
-    : getCourseProgressSummary(locale, completedCount, totalModules);
+    : totalModules === 0 
+      ? t.courses.noModulesYet
+      : t.courses.modulesCompleted(completedCount, totalModules);
 
   const nextModuleId = useMemo(() => {
     if (!modules.length) return null;
@@ -180,12 +91,12 @@ export default function ConsumerCourseView({
     router.push(`${basePath}/${course.id}/modules/${nextModuleId}?lang=${locale}`);
   };
 
-  const startButtonLabel = completedCount > 0 ? 'Fortsett kurs' : 'Start kurs';
+  const startButtonLabel = completedCount > 0 ? t.courses.continueCourse : t.courses.startCourse;
 
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
-        Laster kurs …
+        {t.common.loading}
       </div>
     );
   }
@@ -213,7 +124,7 @@ export default function ConsumerCourseView({
           </div>
         ) : (
           <div className="flex h-48 items-center justify-center bg-gradient-to-br from-slate-200 to-slate-100 text-slate-500 sm:h-64 md:h-72">
-            Ingen forsidebilde
+            {t.courses.noImage}
           </div>
         )}
         <div className="flex flex-col gap-4 px-6 py-8 md:px-10">
@@ -223,7 +134,7 @@ export default function ConsumerCourseView({
             </h1>
             {updatedAt && (
               <p className="mt-1 text-xs text-slate-400">
-                {getLastUpdatedLabel(locale)}{' '}
+                {t.courses.lastUpdated}{' '}
                 {updatedAt.toLocaleString(getDateLocale(locale))}
               </p>
             )}
@@ -235,7 +146,7 @@ export default function ConsumerCourseView({
           )}
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
             <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
-              <span>{getCourseProgressLabel(locale)}</span>
+              <span>{t.courses.courseProgress}</span>
               <span>{progressLoading ? '…' : `${courseProgressPercent}%`}</span>
             </div>
             <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -251,7 +162,7 @@ export default function ConsumerCourseView({
 
       <section className="rounded-3xl border border-slate-200 bg-white px-6 py-8 shadow-sm md:px-10">
         <h2 className="text-2xl font-semibold text-slate-900">
-          {getModulesHeading(locale)}
+          {t.courses.modules}
         </h2>
         <div className="mt-6 space-y-4">
           {modules.map((module, index) => {
@@ -266,7 +177,7 @@ export default function ConsumerCourseView({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-300"
               >
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Emne {index + 1}
+                  {t.modules.module} {index + 1}
                 </p>
                 <h3 className="text-lg font-semibold text-slate-900">
                   {getLocalizedValue(module.title, locale) || 'Uten tittel'}
@@ -278,12 +189,12 @@ export default function ConsumerCourseView({
                 )}
                 {videoCount > 0 && (
                   <p className="mt-2 text-xs text-slate-400">
-                    Inneholder {videoCount} video{videoCount > 1 ? 'er' : ''}
+                    {t.modules.containsVideos(videoCount)}
                   </p>
                 )}
                 <div className="mt-4">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-                    <span>{getModuleStatusLabel(locale, isCompleted)}</span>
+                    <span>{isCompleted ? t.courses.completed : t.courses.notStarted}</span>
                     <span>{moduleProgressPercent}%</span>
                   </div>
                   <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -312,4 +223,3 @@ export default function ConsumerCourseView({
     </div>
   );
 }
-

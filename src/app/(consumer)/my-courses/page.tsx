@@ -1,18 +1,26 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import Link from 'next/link';
 
 import { useAuth } from '@/context/AuthContext';
 import { useConsumerCourses } from '@/hooks/useConsumerCourses';
 import { useCustomer } from '@/hooks/useCustomer';
-import Link from 'next/link';
 import type { Course } from '@/types/course';
 import { getLocalizedValue, getPreferredLocale } from '@/utils/localization';
+import { getTranslation } from '@/utils/translations';
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 import { useCourseModules } from '@/hooks/useCourseModules';
 
 export default function MyCoursesPage() {
   const { profile } = useAuth();
+  const [locale, setLocale] = useState('no');
+
+  useEffect(() => {
+    setLocale(getPreferredLocale(['no', 'en']));
+  }, []);
+
+  const t = getTranslation(locale);
 
   const customerIds = useMemo(() => 
     profile?.customerMemberships?.map(m => m.customerId) ?? [], 
@@ -22,15 +30,15 @@ export default function MyCoursesPage() {
   return (
     <div className="space-y-10">
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold text-slate-900">Mine kurs</h1>
+        <h1 className="text-3xl font-bold text-slate-900">{t.courses.title}</h1>
         <p className="text-slate-500">
-          Her finner du oversikt over kurs du har tilgang til.
+          {t.courses.subtitle}
         </p>
       </div>
 
       {customerIds.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
-          Du har ingen kurstilganger ennå.
+          {t.courses.noAccess}
         </div>
       ) : (
         <div className="space-y-12">
@@ -39,6 +47,7 @@ export default function MyCoursesPage() {
               key={membership.customerId}
               customerId={membership.customerId}
               customerName={membership.customerName}
+              locale={locale}
             />
           ))}
         </div>
@@ -49,13 +58,16 @@ export default function MyCoursesPage() {
 
 function CustomerCoursesSection({ 
   customerId, 
-  customerName 
+  customerName,
+  locale
 }: { 
   customerId: string; 
   customerName?: string; 
+  locale: string;
 }) {
   const { customer, loading: customerLoading } = useCustomer(null, customerId);
   const { courses, loading: coursesLoading } = useConsumerCourses(customer?.courseIds ?? []);
+  const t = getTranslation(locale);
 
   if (customerLoading) {
     return <div className="animate-pulse h-40 rounded-2xl bg-slate-100"></div>;
@@ -76,23 +88,26 @@ function CustomerCoursesSection({
   return (
     <section className="space-y-6">
       <h2 className="text-xl font-semibold text-slate-900">
-        Kurs fra {customer.companyName || customerName}
+        {t.courses.courseFrom} {customer.companyName || customerName}
       </h2>
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {courses.map((course) => (
-          <ConsumerCourseCard key={course.id} course={course} />
+          <ConsumerCourseCard key={course.id} course={course} locale={locale} />
         ))}
       </div>
     </section>
   );
 }
 
-function ConsumerCourseCard({ course }: { course: Course }) {
+function ConsumerCourseCard({ course, locale }: { course: Course; locale: string }) {
   const { completedModules } = useCourseProgress(course.id);
   const { modules } = useCourseModules(course.id);
+  const t = getTranslation(locale);
   
-  const locale = getPreferredLocale(['no', 'en']);
-
+  const courseLocale = getPreferredLocale(['no', 'en']); // Content fallback logic can remain or use UI locale if appropriate.
+  // Usually we want content locale to follow UI locale if possible, but fallback to what's available.
+  // getLocalizedValue handles the fallback logic internally given a requested locale.
+  
   const totalModules = modules.length;
   const completedCount = modules.filter((module) =>
     completedModules.includes(module.id),
@@ -119,12 +134,12 @@ function ConsumerCourseCard({ course }: { course: Course }) {
           />
         ) : (
            <div className="flex h-full items-center justify-center text-slate-400">
-             Ingen bilde
+             {t.courses.noImage}
            </div>
         )}
         {isCompleted && (
           <div className="absolute top-3 right-3 rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-white shadow-sm">
-            Fullført
+            {t.courses.completed}
           </div>
         )}
       </div>
@@ -134,7 +149,7 @@ function ConsumerCourseCard({ course }: { course: Course }) {
         </h3>
         <div className="mt-auto pt-4 space-y-2">
           <div className="flex justify-between text-xs font-medium text-slate-500">
-            <span>{isStarted ? `${progressPercent}% fullført` : 'Ikke påbegynt'}</span>
+            <span>{isStarted ? `${progressPercent}${t.courses.percentCompleted}` : t.courses.notStarted}</span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div

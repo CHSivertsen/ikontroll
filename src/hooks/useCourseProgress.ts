@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, setDoc } from 'firebase/firestore';
 
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/lib/firebase';
@@ -22,10 +22,13 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
 
   useEffect(() => {
     if (!courseId || !firebaseUser?.uid) {
-      setCompletedModules([]);
-      completedModulesRef.current = [];
-      setLoading(false);
-      setError(null);
+      // Avoid setting state if it's already empty/false to prevent loops
+      if (completedModulesRef.current.length > 0) {
+        setCompletedModules([]);
+        completedModulesRef.current = [];
+      }
+      setLoading((prev) => (prev ? false : prev));
+      setError((prev) => (prev ? null : prev));
       return;
     }
 
@@ -100,4 +103,49 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
     error,
     setModuleCompletion,
   };
+};
+
+export interface UserCourseProgress {
+  courseId: string;
+  completedModules: string[];
+}
+
+export const useAllCourseProgress = () => {
+  const { firebaseUser } = useAuth();
+  const [progress, setProgress] = useState<UserCourseProgress[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!firebaseUser?.uid) {
+      setLoading((prev) => (prev ? false : prev));
+      setProgress((prev) => (prev.length ? [] : prev));
+      return;
+    }
+
+    const q = query(collection(db, 'users', firebaseUser.uid, 'courseProgress'));
+    
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const results: UserCourseProgress[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          results.push({
+            courseId: doc.id,
+            completedModules: Array.isArray(data.completedModules) ? data.completedModules : [],
+          });
+        });
+        setProgress(results);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Failed to fetch all course progress', error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [firebaseUser?.uid]);
+
+  return { progress, loading };
 };

@@ -3,14 +3,23 @@
 import { GraduationCap, LogOut, Menu, User } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/context/AuthContext';
+import { getPreferredLocale } from '@/utils/localization';
+import { getTranslation } from '@/utils/translations';
 
 const ConsumerNavbar = () => {
   const { profile, logout } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const pathname = usePathname();
+  const [locale, setLocale] = useState('no');
+
+  useEffect(() => {
+    setLocale(getPreferredLocale(['no', 'en']));
+  }, []);
+
+  const t = getTranslation(locale);
 
   const isActive = (path: string) => pathname === path;
 
@@ -34,7 +43,7 @@ const ConsumerNavbar = () => {
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Mine kurs
+                {t.common.myCourses}
               </Link>
               <Link
                 href="/profile"
@@ -44,7 +53,7 @@ const ConsumerNavbar = () => {
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Min profil
+                {t.common.myProfile}
               </Link>
             </nav>
           </div>
@@ -67,7 +76,7 @@ const ConsumerNavbar = () => {
               <button
                 onClick={logout}
                 className="ml-2 rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-                aria-label="Logg ut"
+                aria-label={t.common.logout}
               >
                 <LogOut size={18} />
               </button>
@@ -77,7 +86,7 @@ const ConsumerNavbar = () => {
             <button
               className="hidden" 
               onClick={toggleMenu}
-              aria-label="Meny"
+              aria-label={t.common.menu}
             >
               <Menu size={24} className="text-slate-700" />
             </button>
@@ -114,7 +123,7 @@ const ConsumerNavbar = () => {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50"
             >
               <LogOut size={18} />
-              Logg ut
+              {t.common.logout}
             </button>
           </div>
         </div>
@@ -130,7 +139,7 @@ const ConsumerNavbar = () => {
             }`}
           >
             <GraduationCap size={24} strokeWidth={isActive('/my-courses') ? 2.5 : 2} />
-            <span className="text-[10px] font-medium">Mine kurs</span>
+            <span className="text-[10px] font-medium">{t.nav.myCourses}</span>
           </Link>
           <Link
             href="/profile"
@@ -139,7 +148,7 @@ const ConsumerNavbar = () => {
             }`}
           >
             <User size={24} strokeWidth={isActive('/profile') ? 2.5 : 2} />
-            <span className="text-[10px] font-medium">Profil</span>
+            <span className="text-[10px] font-medium">{t.common.profile}</span>
           </Link>
           <button
              onClick={toggleMenu}
@@ -148,7 +157,7 @@ const ConsumerNavbar = () => {
              }`}
            >
              <Menu size={24} strokeWidth={isMenuOpen ? 2.5 : 2} />
-             <span className="text-[10px] font-medium">Meny</span>
+             <span className="text-[10px] font-medium">{t.common.menu}</span>
            </button>
         </div>
       </nav>

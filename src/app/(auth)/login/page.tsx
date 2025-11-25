@@ -6,6 +6,8 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 
 import { useAuth } from '@/context/AuthContext';
 import { auth } from '@/lib/firebase';
+import { getPreferredLocale } from '@/utils/localization';
+import { getTranslation } from '@/utils/translations';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,6 +16,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  
+  // Simple locale detection for login page
+  const [locale, setLocale] = useState('no');
+
+  useEffect(() => {
+    const detected = getPreferredLocale(['no', 'en']);
+    setLocale(detected);
+  }, []);
+
+  const t = getTranslation(locale);
 
   useEffect(() => {
     if (loading || !firebaseUser) {
@@ -21,7 +33,6 @@ export default function LoginPage() {
     }
 
     // Check for roles to determine redirect
-    // We use the same flags as the DashboardLayout to ensure consistency
     if (isSystemOwner || isCustomerAdmin) {
       router.replace('/dashboard');
     } else {
@@ -39,7 +50,7 @@ export default function LoginPage() {
       // Navigation is handled by the useEffect above
     } catch (err) {
       console.error(err);
-      setError('Feil e-post eller passord.');
+      setError(t.auth.errorInvalidCredentials);
       setSubmitting(false);
     }
   };
@@ -48,7 +59,7 @@ export default function LoginPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
         <div className="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-xl">
-          Logger deg inn …
+          {t.auth.loggingYouIn}
         </div>
       </main>
     );
@@ -64,14 +75,14 @@ export default function LoginPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
             IKontroll
           </p>
-          <h1 className="text-2xl font-semibold text-slate-900">Logg inn</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">{t.auth.loginTitle}</h1>
           <p className="text-sm text-slate-500">
-            Bruk e-post og passordet du fikk tilsendt.
+            {t.auth.loginSubtitle}
           </p>
         </div>
 
         <label className="block space-y-2 text-sm font-medium text-slate-700">
-          E-post
+          {t.auth.email}
           <input
             type="email"
             value={email}
@@ -82,7 +93,7 @@ export default function LoginPage() {
         </label>
 
         <label className="block space-y-2 text-sm font-medium text-slate-700">
-          Passord
+          {t.auth.password}
           <input
             type="password"
             value={password}
@@ -99,7 +110,7 @@ export default function LoginPage() {
           disabled={submitting}
           className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
         >
-          {submitting ? 'Logger inn…' : 'Logg inn'}
+          {submitting ? t.auth.loggingIn : t.auth.loginButton}
         </button>
       </form>
     </main>

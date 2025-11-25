@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import confetti from 'canvas-confetti';
 
 import { useCourseProgress } from '@/hooks/useCourseProgress';
+import { useCourseModules } from '@/hooks/useCourseModules';
 import type {
   Course,
   CourseModule,
@@ -16,6 +18,7 @@ import {
   getLocalizedValue,
   getPreferredLocale,
 } from '@/utils/localization';
+import { getTranslation } from '@/utils/translations';
 
 interface ConsumerModuleViewProps {
   course: Course;
@@ -31,69 +34,6 @@ const getAlternativeLabel = (
   locale: string,
 ) => getLocalizedValue(alternative.altText, locale) || 'Alternativ';
 
-const getQuizButtonLabels = (locale: string) => {
-  switch (locale) {
-    case 'en':
-      return {
-        previous: 'Previous question',
-        next: 'Next question',
-        finish: 'Finish quiz',
-        retry: 'Retake quiz',
-        back: 'Back to course overview',
-      };
-    case 'it':
-      return {
-        previous: 'Domanda precedente',
-        next: 'Domanda successiva',
-        finish: 'Termina quiz',
-        retry: 'Ricomincia il quiz',
-        back: 'Torna alla panoramica del corso',
-      };
-    case 'sv':
-      return {
-        previous: 'Föregående fråga',
-        next: 'Nästa fråga',
-        finish: 'Avsluta quiz',
-        retry: 'Gör om quizzen',
-        back: 'Tillbaka till kursöversikten',
-      };
-    default:
-      return {
-        previous: 'Forrige spørsmål',
-        next: 'Neste spørsmål',
-        finish: 'Fullfør quiz',
-        retry: 'Ta quizen på nytt',
-        back: 'Tilbake til kursoversikt',
-      };
-  }
-};
-
-const getModuleStatusLabel = (locale: string, isComplete: boolean): string => {
-  if (isComplete) {
-    switch (locale) {
-      case 'en':
-        return 'Completed';
-      case 'it':
-        return 'Completato';
-      case 'sv':
-        return 'Slutförd';
-      default:
-        return 'Fullført';
-    }
-  }
-
-  switch (locale) {
-    case 'en':
-      return 'Not completed';
-    case 'it':
-      return 'Non completato';
-    case 'sv':
-      return 'Inte slutförd';
-    default:
-      return 'Ikke fullført';
-  }
-};
-
 export default function ConsumerModuleView({
   course,
   module,
@@ -103,6 +43,7 @@ export default function ConsumerModuleView({
   const searchParams = useSearchParams();
   const requestedLang = searchParams.get('lang');
   const { completedModules, setModuleCompletion } = useCourseProgress(course.id);
+  const { modules } = useCourseModules(course.id); // Needed to find next module
 
   const availableLocales = useMemo(() => {
     const set = new Set<string>();
@@ -126,18 +67,20 @@ export default function ConsumerModuleView({
     [availableLocales, requestedLang],
   );
 
+  const t = getTranslation(locale);
+
   const videos = getLocalizedList(module.videoUrls, locale);
   const images = getLocalizedList(module.imageUrls, locale);
-  const moduleTitle = getLocalizedValue(module.title, locale) || 'Emne';
+  const moduleTitle = getLocalizedValue(module.title, locale) || t.modules.module;
   const summary = getLocalizedValue(module.summary, locale);
   const bodyHtml = getLocalizedValue(module.body, locale);
   const questions = module.questions ?? [];
   const isModuleCompleted = completedModules.includes(module.id);
-  const quizLabels = getQuizButtonLabels(locale);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
+  const [showCourseComplete, setShowCourseComplete] = useState(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
   const handleSelectAlternative = (questionId: string, alternativeId: string) => {
@@ -176,11 +119,25 @@ export default function ConsumerModuleView({
       return;
     }
     const allCorrect = incorrectQuestions.length === 0;
-    // Only update progress if they passed (all correct)
-    // If we want to mark as "attempted but failed" we could do that too,
-    // but the current requirement is "completion = all correct".
     if (allCorrect) {
-      setModuleCompletion(module.id, true).catch((err) => {
+      setModuleCompletion(module.id, true).then(() => {
+        // Check for overall course completion
+        if (!modules) return;
+        
+        const allOtherModulesCompleted = modules
+          .filter(m => m.id !== module.id)
+          .every(m => completedModules.includes(m.id));
+          
+        if (allOtherModulesCompleted) {
+          setShowCourseComplete(true);
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#10b981', '#34d399', '#059669', '#ffffff'],
+          });
+        }
+      }).catch((err) => {
         console.error('Failed to update module progress', err);
       });
     }
@@ -190,13 +147,55 @@ export default function ConsumerModuleView({
     incorrectQuestions.length,
     questions.length,
     setModuleCompletion,
+    completedModules,
+    modules
   ]);
+
+  // Find next module
+  const nextModuleId = useMemo(() => {
+    if (!modules) return null;
+    const currentIndex = modules.findIndex(m => m.id === module.id);
+    if (currentIndex === -1 || currentIndex === modules.length - 1) return null;
+    return modules[currentIndex + 1].id;
+  }, [modules, module.id]);
+
+  const handleGoToNextModule = () => {
+    if (nextModuleId) {
+      router.push(`${basePath}/${course.id}/modules/${nextModuleId}?lang=${locale}`);
+    }
+  };
+
+  const handleFinishCourse = () => {
+    router.push(basePath);
+  };
 
   const scorePercentage = questions.length
     ? Math.round(
         ((questions.length - incorrectQuestions.length) / questions.length) * 100,
       )
     : 0;
+
+  if (showCourseComplete) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 text-center px-4">
+        <div className="rounded-full bg-emerald-100 p-6">
+          <div className="text-6xl">🏆</div>
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold text-slate-900">Gratulerer!</h1>
+          <p className="text-lg text-slate-600">
+            Du har fullført kurset <span className="font-semibold">{getLocalizedValue(course.title, locale)}</span>.
+          </p>
+        </div>
+        <button
+          onClick={handleFinishCourse}
+          className="mt-4 rounded-2xl bg-slate-900 px-8 py-3 text-base font-semibold text-white transition hover:bg-slate-800"
+        >
+          {t.modules.backToOverview}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-8 pb-12">
@@ -205,12 +204,12 @@ export default function ConsumerModuleView({
           href={`${basePath}/${course.id}?lang=${locale}`}
           className="text-sm font-semibold text-slate-500 transition hover:text-slate-900"
         >
-          ← {quizLabels.back}
+          ← {t.modules.backToOverview}
         </Link>
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Emne
+              {t.modules.module}
             </p>
             <span
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
@@ -219,7 +218,7 @@ export default function ConsumerModuleView({
                   : 'bg-slate-100 text-slate-500'
               }`}
             >
-              {getModuleStatusLabel(locale, isModuleCompleted)}
+              {isModuleCompleted ? t.courses.completed : t.courses.notStarted}
             </span>
           </div>
           <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
@@ -231,7 +230,7 @@ export default function ConsumerModuleView({
 
       {(images.length > 0 || videos.length > 0) && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
-          <h2 className="text-xl font-semibold text-slate-900">Mediegalleri</h2>
+          <h2 className="text-xl font-semibold text-slate-900">{t.modules.mediaGallery}</h2>
           <div className="mt-4 grid gap-6 md:grid-cols-2">
             {images.map((url) => (
               <div
@@ -257,7 +256,7 @@ export default function ConsumerModuleView({
                 ) : (
                   <video controls className="aspect-video w-full">
                     <source src={url} />
-                    Nettleseren din støtter ikke video.
+                    {t.modules.videoNotSupported}
                   </video>
                 )}
               </div>
@@ -268,7 +267,7 @@ export default function ConsumerModuleView({
 
       {bodyHtml && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
-          <h2 className="text-xl font-semibold text-slate-900">Innhold</h2>
+          <h2 className="text-xl font-semibold text-slate-900">{t.modules.content}</h2>
           <div
             className="prose prose-slate mt-4 max-w-none"
             dangerouslySetInnerHTML={{ __html: bodyHtml }}
@@ -279,11 +278,11 @@ export default function ConsumerModuleView({
       {questions.length > 0 && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
           <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-slate-900">Kontrollspørsmål</h2>
+            <h2 className="text-xl font-semibold text-slate-900">{t.modules.questions}</h2>
             <span className="text-sm text-slate-500">
               {showSummary
-                ? 'Oppsummering'
-                : `Spørsmål ${currentIndex + 1} av ${questions.length}`}
+                ? t.modules.summary
+                : `${t.modules.question} ${currentIndex + 1} av ${questions.length}`}
             </span>
           </div>
 
@@ -291,14 +290,13 @@ export default function ConsumerModuleView({
             <div className="space-y-6">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
                 <p>
-                  Du fikk {questions.length - incorrectQuestions.length} av{' '}
-                  {questions.length} riktige ({scorePercentage}%).
+                  {t.modules.result(questions.length - incorrectQuestions.length, questions.length, scorePercentage)}
                 </p>
               </div>
               {incorrectQuestions.length > 0 ? (
                 <div className="space-y-4">
                   <p className="text-sm font-semibold text-slate-700">
-                    Spørsmål du bør se gjennom igjen:
+                    {t.modules.reviewQuestions}
                   </p>
                   {incorrectQuestions.map((question) => {
                     const questionText = getLocalizedValue(
@@ -317,17 +315,17 @@ export default function ConsumerModuleView({
                         className="rounded-2xl border border-red-100 bg-red-50 px-5 py-4"
                       >
                         <p className="text-sm font-semibold text-red-700">
-                          {questionText || 'Spørsmål'}
+                          {questionText || t.modules.question}
                         </p>
                         <p className="mt-2 text-sm text-red-600">
-                          Ditt svar:{' '}
+                          {t.modules.yourAnswer}{' '}
                           {userAlternative
                             ? getAlternativeLabel(userAlternative, locale)
                             : '—'}
                         </p>
                         {correctAlternative && (
                           <p className="text-sm text-slate-600">
-                            Riktig svar:{' '}
+                            {t.modules.correctAnswer}{' '}
                             {getAlternativeLabel(correctAlternative, locale)}
                           </p>
                         )}
@@ -337,28 +335,38 @@ export default function ConsumerModuleView({
                 </div>
               ) : (
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
-                  Flott! Du svarte riktig på alle spørsmål.
+                  {t.modules.allCorrect}
                 </div>
               )}
               <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={resetQuiz}
-                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  {quizLabels.retry}
-                </button>
+                {incorrectQuestions.length === 0 && nextModuleId && !showCourseComplete && (
+                  <button
+                    onClick={handleGoToNextModule}
+                    className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    {t.modules.nextModule}
+                  </button>
+                )}
+                {incorrectQuestions.length > 0 && (
+                  <button
+                    onClick={resetQuiz}
+                    className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    {t.modules.retry}
+                  </button>
+                )}
                 <button
                   onClick={() => router.push(`${basePath}/${course.id}?lang=${locale}`)}
-                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  {quizLabels.back}
+                  {t.modules.backToOverview}
                 </button>
               </div>
             </div>
           ) : currentQuestion ? (
             <div className="space-y-5">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-700">
-                {getLocalizedValue(currentQuestion.contentText, locale) || 'Spørsmål'}
+                {getLocalizedValue(currentQuestion.contentText, locale) || t.modules.question}
               </div>
               <div className="space-y-3">
                 {currentQuestion.alternatives.map((alternative) => {
@@ -387,7 +395,7 @@ export default function ConsumerModuleView({
                   disabled={currentIndex === 0}
                   className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {quizLabels.previous}
+                  {t.modules.previousQuestion}
                 </button>
                 <button
                   onClick={handleNext}
@@ -395,23 +403,22 @@ export default function ConsumerModuleView({
                   className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {currentIndex === questions.length - 1
-                    ? quizLabels.finish
-                    : quizLabels.next}
+                    ? t.modules.finishQuiz
+                    : t.modules.nextQuestion}
                 </button>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-slate-600">Ingen spørsmål er tilgjengelige.</p>
+            <p className="text-sm text-slate-600">{t.modules.noQuestions}</p>
           )}
         </section>
       )}
 
       {questions.length === 0 && (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm md:p-10">
-          Dette emnet har ikke kontrollspørsmål ennå.
+          {t.modules.noQuestionsYet}
         </div>
       )}
     </div>
   );
 }
-

@@ -1,32 +1,45 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { GraduationCap } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
+import { useAllCourseProgress } from '@/hooks/useCourseProgress';
 import { useConsumerCourses } from '@/hooks/useConsumerCourses';
-import { useCourseProgress } from '@/hooks/useCourseProgress';
-import { useCustomer } from '@/hooks/useCustomer';
+import { useCourseModules } from '@/hooks/useCourseModules';
 import type { Course } from '@/types/course';
 import { getLocalizedValue, getPreferredLocale } from '@/utils/localization';
-import { useCourseModules } from '@/hooks/useCourseModules';
+import { getTranslation } from '@/utils/translations';
 
 export default function ProfilePage() {
   const { profile } = useAuth();
+  const [locale, setLocale] = useState('no');
+  
+  const { progress, loading: progressLoading } = useAllCourseProgress();
+  
+  const candidateCourseIds = useMemo(() => {
+    return progress
+      .filter(p => p.completedModules.length > 0)
+      .map(p => p.courseId);
+  }, [progress]);
 
-  const customerIds = useMemo(() => 
-    profile?.customerMemberships?.map(m => m.customerId) ?? [], 
-    [profile]
-  );
+  const { courses, loading: coursesLoading } = useConsumerCourses(candidateCourseIds);
 
-  // We will check if there are NO courses at all, or no COMPLETED courses to show appropriate empty state.
-  // Since the loaders are async and independent, handling the "global empty state" for completed courses perfectly
-  // without a parent data fetcher is tricky.
-  // For now, we'll show the empty state if customerIds is empty.
-  // If customerIds exist but no courses are completed, the list will just be empty. 
-  // To improve this, we'd need to lift the state up.
-  // Let's stick to a simple empty state for "No customer access" first, 
-  // and we can add a "No completed courses" placeholder inside the list if needed.
+  useEffect(() => {
+    // setLocale is safe to call here as it's just setting initial state based on browser
+    const detected = getPreferredLocale(['no', 'en']);
+    setLocale(detected);
+  }, []);
+
+  const t = getTranslation(locale);
+
+  if (progressLoading || coursesLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
+        {t.common.loading}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center gap-8 pb-10">
@@ -44,92 +57,114 @@ export default function ProfilePage() {
       </div>
 
       <div className="w-full max-w-2xl space-y-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
-        <h2 className="text-xl font-semibold text-slate-900">Fullførte kurs</h2>
+        <h2 className="text-xl font-semibold text-slate-900">{t.profile.completedCourses}</h2>
         
-        {customerIds.length === 0 ? (
-           <EmptyState />
-        ) : (
-          <div className="space-y-4">
-             <CoursesList customerIds={customerIds} />
-          </div>
-        )}
+        <CompletedCoursesList 
+          courses={courses} 
+          progressMap={Object.fromEntries(progress.map(p => [p.courseId, p.completedModules]))}
+          locale={locale} 
+        />
       </div>
     </div>
   );
 }
 
-// A wrapper component to handle the logic of "Do we have ANY completed courses?"
-// This is still hard without fetching everything at the top level.
-// We will just render the list. If it's empty, it's empty.
-// To make it nicer, we can't easily know if *all* children returned null without context/state.
-// So for now, we render the loaders. 
-// If you want a global "No completed courses" message, we need to refactor to fetch all courses in the parent.
+function CompletedCoursesList({ 
+  courses, 
+  progressMap, 
+  locale 
+}: { 
+  courses: Course[]; 
+  progressMap: Record<string, string[]>; 
+  locale: string 
+}) {
+  const [verifiedCompletedIds, setVerifiedCompletedIds] = useState<string[]>([]);
+  const [checkedCount, setCheckedCount] = useState(0);
+  
+  const handleVerification = (courseId: string, isCompleted: boolean) => {
+    if (isCompleted) {
+      setVerifiedCompletedIds(prev => {
+        if (prev.includes(courseId)) return prev;
+        return [...prev, courseId];
+      });
+    }
+    setCheckedCount(prev => prev + 1);
+  };
 
-function CoursesList({ customerIds }: { customerIds: string[] }) {
-    // This component is just a container for now.
-    // A true empty state for "You have access to courses but haven't completed any" 
-    // requires fetching completion status for ALL courses here.
-    return (
-        <>
-            {customerIds.map((customerId) => (
-               <CompletedCoursesLoader
-                 key={customerId}
-                 customerId={customerId}
-               />
-            ))}
-             {/* 
-                Ideally we would show <EmptyState /> here if the total count of rendered items is 0.
-                But we can't know that from here since data is fetched in children.
-                Visual improvement: We can show the EmptyState by default and hide it if we find content? No.
-                
-                Let's stick to the current implementation where we show nothing if nothing is completed.
-                If the user wants an explicit "No completed courses" message when they have access but 0 completed, 
-                we'd need a bigger refactor.
-             */}
-        </>
-    )
+  const isLoading = checkedCount < courses.length;
+  const hasCompletedCourses = verifiedCompletedIds.length > 0;
+
+  if (courses.length === 0) {
+     return <EmptyState locale={locale} />;
+  }
+
+  return (
+    <>
+      {isLoading && (
+        <div className="py-4 text-center text-sm text-slate-400 animate-pulse">
+          Sjekker fullførte kurs...
+        </div>
+      )}
+      
+      {!isLoading && !hasCompletedCourses && <EmptyState locale={locale} />}
+
+      <div className={!hasCompletedCourses && !isLoading ? 'hidden' : 'space-y-4'}>
+        {courses.map(course => (
+          <CompletedCourseChecker
+            key={course.id}
+            course={course}
+            completedModules={progressMap[course.id] || []}
+            onVerify={handleVerification}
+            locale={locale}
+          />
+        ))}
+      </div>
+    </>
+  );
 }
 
-function EmptyState() {
+function EmptyState({ locale }: { locale: string }) {
+    const t = getTranslation(locale);
     return (
         <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-slate-500">
             <div className="rounded-full bg-slate-100 p-4">
                 <GraduationCap className="h-8 w-8 text-slate-400" />
             </div>
-            <p>Ingen fullførte kurs ennå.</p>
+            <p>{t.profile.noCompletedCourses}</p>
         </div>
     )
 }
 
-function CompletedCoursesLoader({ customerId }: { customerId: string }) {
-  const { customer } = useCustomer(null, customerId);
-  const { courses } = useConsumerCourses(customer?.courseIds ?? []);
+function CompletedCourseChecker({ 
+  course, 
+  completedModules, 
+  onVerify, 
+  locale 
+}: { 
+  course: Course; 
+  completedModules: string[]; 
+  onVerify: (id: string, isCompleted: boolean) => void; 
+  locale: string;
+}) {
+  const { modules, loading } = useCourseModules(course.id);
+  const t = getTranslation(locale);
 
-  if (!customer || !courses.length) return null;
+  useEffect(() => {
+    if (!loading && modules) {
+        const totalModules = modules.length;
+        const validCompletedCount = modules.filter(m => completedModules.includes(m.id)).length;
+        
+        const isCompleted = totalModules > 0 && validCompletedCount === totalModules;
+        onVerify(course.id, isCompleted);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, modules]); 
 
-  return (
-    <>
-      {courses.map(course => (
-        <CompletedCourseItem key={course.id} course={course} />
-      ))}
-    </>
-  );
-}
-
-function CompletedCourseItem({ course }: { course: Course }) {
-  const { completedModules, loading } = useCourseProgress(course.id);
-  const { modules } = useCourseModules(course.id);
-  
-  const locale = getPreferredLocale(['no', 'en']);
-
-  if (loading || !modules.length) return null;
+  if (loading || !modules) return null;
 
   const totalModules = modules.length;
-  const completedCount = modules.filter((module) =>
-    completedModules.includes(module.id),
-  ).length;
-
-  const isCompleted = totalModules > 0 && completedCount === totalModules;
+  const validCompletedCount = modules.filter(m => completedModules.includes(m.id)).length;
+  const isCompleted = totalModules > 0 && validCompletedCount === totalModules;
 
   if (!isCompleted) return null;
 
@@ -143,7 +178,7 @@ function CompletedCourseItem({ course }: { course: Course }) {
           {getLocalizedValue(course.title, locale)}
         </h3>
         <p className="text-xs text-emerald-700">
-           Fullført
+           {t.courses.completed}
         </p>
       </div>
     </div>
