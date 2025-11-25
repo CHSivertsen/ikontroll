@@ -405,7 +405,7 @@ export default function CustomerManager() {
               className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
               aria-label="Administrer brukere"
             >
-              <span className="text-xs font-semibold">👥</span>
+              <span className="text-xs font-semibold">🎓</span>
             </Link>
             <button
               onClick={() => openEdit(customer)}
