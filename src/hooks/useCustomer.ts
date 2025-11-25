@@ -49,6 +49,9 @@ export const useCustomer = (
         } else {
           const data = snapshot.data();
           const createdByCompanyId = data.createdByCompanyId ?? '';
+          
+          // If ownerCompanyId is provided (system admin context), verify ownership.
+          // If null (consumer context), we assume access is checked elsewhere or this hook is used for public/authorized read.
           if (ownerCompanyId && createdByCompanyId && createdByCompanyId !== ownerCompanyId) {
             setCustomer(null);
             setError('Du har ikke tilgang til denne kunden.');
@@ -89,4 +92,3 @@ export const useCustomer = (
 
   return { customer, loading, error };
 };
-

@@ -1,0 +1,417 @@
+'use client';
+
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+
+import { useCourseProgress } from '@/hooks/useCourseProgress';
+import type {
+  Course,
+  CourseModule,
+  CourseQuestion,
+  CourseQuestionAlternative,
+} from '@/types/course';
+import {
+  getLocalizedList,
+  getLocalizedValue,
+  getPreferredLocale,
+} from '@/utils/localization';
+
+interface ConsumerModuleViewProps {
+  course: Course;
+  module: CourseModule;
+  basePath?: string; // e.g. '/my-courses'
+}
+
+const isYouTubeUrl = (url: string): boolean =>
+  /youtu\.be|youtube\.com/.test(url.toLowerCase());
+
+const getAlternativeLabel = (
+  alternative: CourseQuestionAlternative,
+  locale: string,
+) => getLocalizedValue(alternative.altText, locale) || 'Alternativ';
+
+const getQuizButtonLabels = (locale: string) => {
+  switch (locale) {
+    case 'en':
+      return {
+        previous: 'Previous question',
+        next: 'Next question',
+        finish: 'Finish quiz',
+        retry: 'Retake quiz',
+        back: 'Back to course overview',
+      };
+    case 'it':
+      return {
+        previous: 'Domanda precedente',
+        next: 'Domanda successiva',
+        finish: 'Termina quiz',
+        retry: 'Ricomincia il quiz',
+        back: 'Torna alla panoramica del corso',
+      };
+    case 'sv':
+      return {
+        previous: 'Föregående fråga',
+        next: 'Nästa fråga',
+        finish: 'Avsluta quiz',
+        retry: 'Gör om quizzen',
+        back: 'Tillbaka till kursöversikten',
+      };
+    default:
+      return {
+        previous: 'Forrige spørsmål',
+        next: 'Neste spørsmål',
+        finish: 'Fullfør quiz',
+        retry: 'Ta quizen på nytt',
+        back: 'Tilbake til kursoversikt',
+      };
+  }
+};
+
+const getModuleStatusLabel = (locale: string, isComplete: boolean): string => {
+  if (isComplete) {
+    switch (locale) {
+      case 'en':
+        return 'Completed';
+      case 'it':
+        return 'Completato';
+      case 'sv':
+        return 'Slutförd';
+      default:
+        return 'Fullført';
+    }
+  }
+
+  switch (locale) {
+    case 'en':
+      return 'Not completed';
+    case 'it':
+      return 'Non completato';
+    case 'sv':
+      return 'Inte slutförd';
+    default:
+      return 'Ikke fullført';
+  }
+};
+
+export default function ConsumerModuleView({
+  course,
+  module,
+  basePath = '/my-courses',
+}: ConsumerModuleViewProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedLang = searchParams.get('lang');
+  const { completedModules, setModuleCompletion } = useCourseProgress(course.id);
+
+  const availableLocales = useMemo(() => {
+    const set = new Set<string>();
+    if (module.title) Object.keys(module.title).forEach((lang) => set.add(lang));
+    if (module.summary) Object.keys(module.summary).forEach((lang) => set.add(lang));
+    if (module.body) Object.keys(module.body).forEach((lang) => set.add(lang));
+    Object.keys(module.videoUrls ?? {}).forEach((lang) => set.add(lang));
+    Object.keys(module.imageUrls ?? {}).forEach((lang) => set.add(lang));
+    module.questions?.forEach((question) => {
+      Object.keys(question.contentText ?? {}).forEach((lang) => set.add(lang));
+      question.alternatives.forEach((alternative) => {
+        Object.keys(alternative.altText ?? {}).forEach((lang) => set.add(lang));
+      });
+    });
+    if (course.title) Object.keys(course.title).forEach((lang) => set.add(lang));
+    return Array.from(set);
+  }, [module, course]);
+
+  const locale = useMemo(
+    () => getPreferredLocale(availableLocales, requestedLang),
+    [availableLocales, requestedLang],
+  );
+
+  const videos = getLocalizedList(module.videoUrls, locale);
+  const images = getLocalizedList(module.imageUrls, locale);
+  const moduleTitle = getLocalizedValue(module.title, locale) || 'Emne';
+  const summary = getLocalizedValue(module.summary, locale);
+  const bodyHtml = getLocalizedValue(module.body, locale);
+  const questions = module.questions ?? [];
+  const isModuleCompleted = completedModules.includes(module.id);
+  const quizLabels = getQuizButtonLabels(locale);
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [showSummary, setShowSummary] = useState(false);
+
+  const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
+  const handleSelectAlternative = (questionId: string, alternativeId: string) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: alternativeId }));
+  };
+
+  const handleNext = () => {
+    if (!currentQuestion) return;
+    if (currentIndex === questions.length - 1) {
+      setShowSummary(true);
+    } else {
+      setCurrentIndex((prev) => Math.min(prev + 1, questions.length - 1));
+    }
+  };
+
+  const handlePrev = () => {
+    setCurrentIndex((prev) => Math.max(prev - 1, 0));
+  };
+
+  const resetQuiz = () => {
+    setAnswers({});
+    setCurrentIndex(0);
+    setShowSummary(false);
+  };
+
+  const incorrectQuestions = useMemo(
+    () =>
+      questions.filter(
+        (question) => answers[question.id] !== question.correctAnswerId,
+      ),
+    [questions, answers],
+  );
+
+  useEffect(() => {
+    if (!module.id || !showSummary || questions.length === 0) {
+      return;
+    }
+    const allCorrect = incorrectQuestions.length === 0;
+    // Only update progress if they passed (all correct)
+    // If we want to mark as "attempted but failed" we could do that too,
+    // but the current requirement is "completion = all correct".
+    if (allCorrect) {
+      setModuleCompletion(module.id, true).catch((err) => {
+        console.error('Failed to update module progress', err);
+      });
+    }
+  }, [
+    module.id,
+    showSummary,
+    incorrectQuestions.length,
+    questions.length,
+    setModuleCompletion,
+  ]);
+
+  const scorePercentage = questions.length
+    ? Math.round(
+        ((questions.length - incorrectQuestions.length) / questions.length) * 100,
+      )
+    : 0;
+
+  return (
+    <div className="flex flex-col gap-8 pb-12">
+      <header className="space-y-6">
+        <Link
+          href={`${basePath}/${course.id}?lang=${locale}`}
+          className="text-sm font-semibold text-slate-500 transition hover:text-slate-900"
+        >
+          ← {quizLabels.back}
+        </Link>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Emne
+            </p>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                isModuleCompleted
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-slate-100 text-slate-500'
+              }`}
+            >
+              {getModuleStatusLabel(locale, isModuleCompleted)}
+            </span>
+          </div>
+          <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
+            {moduleTitle}
+          </h1>
+          {summary && <p className="mt-3 text-base text-slate-600">{summary}</p>}
+        </div>
+      </header>
+
+      {(images.length > 0 || videos.length > 0) && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+          <h2 className="text-xl font-semibold text-slate-900">Mediegalleri</h2>
+          <div className="mt-4 grid gap-6 md:grid-cols-2">
+            {images.map((url) => (
+              <div
+                key={url}
+                className="relative h-56 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
+              >
+                <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
+              </div>
+            ))}
+            {videos.map((url) => (
+              <div
+                key={url}
+                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-black"
+              >
+                {isYouTubeUrl(url) ? (
+                  <iframe
+                    src={url}
+                    title="Modulvideo"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="aspect-video w-full"
+                  />
+                ) : (
+                  <video controls className="aspect-video w-full">
+                    <source src={url} />
+                    Nettleseren din støtter ikke video.
+                  </video>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {bodyHtml && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+          <h2 className="text-xl font-semibold text-slate-900">Innhold</h2>
+          <div
+            className="prose prose-slate mt-4 max-w-none"
+            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+          />
+        </section>
+      )}
+
+      {questions.length > 0 && (
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-900">Kontrollspørsmål</h2>
+            <span className="text-sm text-slate-500">
+              {showSummary
+                ? 'Oppsummering'
+                : `Spørsmål ${currentIndex + 1} av ${questions.length}`}
+            </span>
+          </div>
+
+          {showSummary ? (
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
+                <p>
+                  Du fikk {questions.length - incorrectQuestions.length} av{' '}
+                  {questions.length} riktige ({scorePercentage}%).
+                </p>
+              </div>
+              {incorrectQuestions.length > 0 ? (
+                <div className="space-y-4">
+                  <p className="text-sm font-semibold text-slate-700">
+                    Spørsmål du bør se gjennom igjen:
+                  </p>
+                  {incorrectQuestions.map((question) => {
+                    const questionText = getLocalizedValue(
+                      question.contentText,
+                      locale,
+                    );
+                    const correctAlternative = question.alternatives.find(
+                      (alternative) => alternative.id === question.correctAnswerId,
+                    );
+                    const userAlternative = question.alternatives.find(
+                      (alternative) => alternative.id === answers[question.id],
+                    );
+                    return (
+                      <div
+                        key={question.id}
+                        className="rounded-2xl border border-red-100 bg-red-50 px-5 py-4"
+                      >
+                        <p className="text-sm font-semibold text-red-700">
+                          {questionText || 'Spørsmål'}
+                        </p>
+                        <p className="mt-2 text-sm text-red-600">
+                          Ditt svar:{' '}
+                          {userAlternative
+                            ? getAlternativeLabel(userAlternative, locale)
+                            : '—'}
+                        </p>
+                        {correctAlternative && (
+                          <p className="text-sm text-slate-600">
+                            Riktig svar:{' '}
+                            {getAlternativeLabel(correctAlternative, locale)}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
+                  Flott! Du svarte riktig på alle spørsmål.
+                </div>
+              )}
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={resetQuiz}
+                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  {quizLabels.retry}
+                </button>
+                <button
+                  onClick={() => router.push(`${basePath}/${course.id}?lang=${locale}`)}
+                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  {quizLabels.back}
+                </button>
+              </div>
+            </div>
+          ) : currentQuestion ? (
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-700">
+                {getLocalizedValue(currentQuestion.contentText, locale) || 'Spørsmål'}
+              </div>
+              <div className="space-y-3">
+                {currentQuestion.alternatives.map((alternative) => {
+                  const label = getAlternativeLabel(alternative, locale);
+                  const isSelected = answers[currentQuestion.id] === alternative.id;
+                  return (
+                    <button
+                      key={alternative.id}
+                      onClick={() =>
+                        handleSelectAlternative(currentQuestion.id, alternative.id)
+                      }
+                      className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                        isSelected
+                          ? 'border-slate-900 bg-slate-900 text-white'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  onClick={handlePrev}
+                  disabled={currentIndex === 0}
+                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {quizLabels.previous}
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={!answers[currentQuestion.id]}
+                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {currentIndex === questions.length - 1
+                    ? quizLabels.finish
+                    : quizLabels.next}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600">Ingen spørsmål er tilgjengelige.</p>
+          )}
+        </section>
+      )}
+
+      {questions.length === 0 && (
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm md:p-10">
+          Dette emnet har ikke kontrollspørsmål ennå.
+        </div>
+      )}
+    </div>
+  );
+}
+

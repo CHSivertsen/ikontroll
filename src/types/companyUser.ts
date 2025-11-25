@@ -5,6 +5,7 @@ export interface CustomerMembership {
   customerId: string;
   customerName?: string;
   roles: CompanyUserRole[];
+  assignedCourseIds?: string[];
 }
 
 export interface CompanyUser {
@@ -30,4 +31,3 @@ export interface CompanyUserPayload {
   roles: CompanyUserRole[];
   status: CompanyUserStatus;
 }
-

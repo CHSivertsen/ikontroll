@@ -23,6 +23,7 @@ export default function DashboardLayout({
     isCustomerAdmin,
     activeCustomerId,
     customerMemberships,
+    logout,
   } = useAuth();
   const router = useRouter();
 
@@ -52,15 +53,22 @@ export default function DashboardLayout({
   if (firebaseUser && profile && !hasAccess) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-slate-50 text-center">
-        <Topbar />
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <p className="text-xl font-semibold text-slate-900">
-            Ingen administratortilganger
-          </p>
-          <p className="max-w-md text-sm text-slate-500">
-            Vi finner ingen kunder eller selskaper der denne brukeren er administrator. Ta
-            kontakt med systemeier for å få tilgang.
-          </p>
+        <div className="space-y-6 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="space-y-2">
+            <p className="text-xl font-semibold text-slate-900">
+              Ingen administratortilganger
+            </p>
+            <p className="max-w-md text-sm text-slate-500">
+              Vi finner ingen kunder eller selskaper der denne brukeren er administrator. Ta
+              kontakt med systemeier for å få tilgang.
+            </p>
+          </div>
+          <button
+            onClick={() => logout()}
+            className="rounded-xl bg-slate-900 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+          >
+            Tilbake til logginn
+          </button>
         </div>
       </div>
     );
@@ -87,4 +95,3 @@ export default function DashboardLayout({
     </div>
   );
 }
-

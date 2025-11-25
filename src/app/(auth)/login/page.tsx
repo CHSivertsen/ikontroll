@@ -9,18 +9,25 @@ import { auth } from '@/lib/firebase';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { firebaseUser } = useAuth();
+  const { firebaseUser, loading, isSystemOwner, isCustomerAdmin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!firebaseUser) {
+    if (loading || !firebaseUser) {
       return;
     }
-    router.replace('/dashboard');
-  }, [firebaseUser, router]);
+
+    // Check for roles to determine redirect
+    // We use the same flags as the DashboardLayout to ensure consistency
+    if (isSystemOwner || isCustomerAdmin) {
+      router.replace('/dashboard');
+    } else {
+      router.replace('/my-courses');
+    }
+  }, [firebaseUser, loading, isSystemOwner, isCustomerAdmin, router]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -29,16 +36,15 @@ export default function LoginPage() {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      router.replace('/dashboard');
+      // Navigation is handled by the useEffect above
     } catch (err) {
       console.error(err);
       setError('Feil e-post eller passord.');
-    } finally {
       setSubmitting(false);
     }
   };
 
-  if (firebaseUser) {
+  if (loading || firebaseUser) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
         <div className="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-xl">
@@ -99,4 +105,3 @@ export default function LoginPage() {
     </main>
   );
 }
-

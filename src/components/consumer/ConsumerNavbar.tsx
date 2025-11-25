@@ -1,0 +1,159 @@
+'use client';
+
+import { GraduationCap, LogOut, Menu, User } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useState } from 'react';
+
+import { useAuth } from '@/context/AuthContext';
+
+const ConsumerNavbar = () => {
+  const { profile, logout } = useAuth();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const pathname = usePathname();
+
+  const isActive = (path: string) => pathname === path;
+
+  const toggleMenu = () => setIsMenuOpen((prev) => !prev);
+
+  return (
+    <>
+      {/* Desktop/Tablet Top Bar */}
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white shadow-sm">
+        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 md:px-8">
+          <div className="flex items-center gap-8">
+            <Link href="/my-courses" className="text-xl font-bold text-slate-900">
+              IKontroll
+            </Link>
+            <nav className="hidden md:flex md:gap-6">
+              <Link
+                href="/my-courses"
+                className={`text-sm font-medium transition ${
+                  isActive('/my-courses')
+                    ? 'text-slate-900'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Mine kurs
+              </Link>
+              <Link
+                href="/profile"
+                className={`text-sm font-medium transition ${
+                  isActive('/profile')
+                    ? 'text-slate-900'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Min profil
+              </Link>
+            </nav>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="hidden items-center gap-3 md:flex">
+              <div className="text-right text-xs">
+                <p className="font-semibold text-slate-900">
+                  {profile?.firstName} {profile?.lastName}
+                </p>
+                <p className="text-slate-500">{profile?.email}</p>
+              </div>
+              <Link
+                href="/profile"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                {profile?.firstName?.[0]}
+                {profile?.lastName?.[0]}
+              </Link>
+              <button
+                onClick={logout}
+                className="ml-2 rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                aria-label="Logg ut"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+
+            {/* Mobile Menu Button (Drawer trigger for Logout) - Hidden on mobile since we have bottom nav */}
+            <button
+              className="hidden" 
+              onClick={toggleMenu}
+              aria-label="Meny"
+            >
+              <Menu size={24} className="text-slate-700" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Mobile Slide-out Menu (Drawer - Right side) */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end md:hidden">
+          <div
+            className="absolute inset-0 bg-black/20 backdrop-blur-sm"
+            onClick={() => setIsMenuOpen(false)}
+          />
+          <div className="relative h-full w-64 bg-white p-6 shadow-xl flex flex-col justify-between">
+            <div>
+                <div className="mb-8 flex flex-col items-center gap-3">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-xl font-bold text-white">
+                    {profile?.firstName?.[0]}
+                    {profile?.lastName?.[0]}
+                  </div>
+                  <div className="text-center">
+                    <p className="font-semibold text-slate-900">
+                      {profile?.firstName} {profile?.lastName}
+                    </p>
+                    <p className="text-xs text-slate-500">{profile?.email}</p>
+                  </div>
+                </div>
+                {/* Drawer content can be expanded here if needed */}
+            </div>
+            
+            <button
+              onClick={logout}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50"
+            >
+              <LogOut size={18} />
+              Logg ut
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Bottom Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white pb-safe md:hidden">
+        <div className="grid grid-cols-3 h-16">
+          <Link
+            href="/my-courses"
+            className={`flex flex-col items-center justify-center gap-1 ${
+              isActive('/my-courses') ? 'text-slate-900' : 'text-slate-400'
+            }`}
+          >
+            <GraduationCap size={24} strokeWidth={isActive('/my-courses') ? 2.5 : 2} />
+            <span className="text-[10px] font-medium">Mine kurs</span>
+          </Link>
+          <Link
+            href="/profile"
+            className={`flex flex-col items-center justify-center gap-1 ${
+              isActive('/profile') ? 'text-slate-900' : 'text-slate-400'
+            }`}
+          >
+            <User size={24} strokeWidth={isActive('/profile') ? 2.5 : 2} />
+            <span className="text-[10px] font-medium">Profil</span>
+          </Link>
+          <button
+             onClick={toggleMenu}
+             className={`flex flex-col items-center justify-center gap-1 ${
+               isMenuOpen ? 'text-slate-900' : 'text-slate-400'
+             }`}
+           >
+             <Menu size={24} strokeWidth={isMenuOpen ? 2.5 : 2} />
+             <span className="text-[10px] font-medium">Meny</span>
+           </button>
+        </div>
+      </nav>
+    </>
+  );
+};
+
+export default ConsumerNavbar;
