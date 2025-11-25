@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useCourse } from '@/hooks/useCourse';
 import { useCourseModule } from '@/hooks/useCourseModule';
 import { useCourseProgress } from '@/hooks/useCourseProgress';
+import { getLocalizedMediaItems } from '@/utils/media';
 import type {
   CourseQuestion,
   CourseQuestionAlternative,
@@ -156,6 +157,7 @@ export default function ModulePreviewPage({
     if (module?.summary)
       Object.keys(module.summary).forEach((lang) => set.add(lang));
     if (module?.body) Object.keys(module.body).forEach((lang) => set.add(lang));
+    if (module?.media) Object.keys(module.media).forEach((lang) => set.add(lang));
     Object.keys(module?.videoUrls ?? {}).forEach((lang) => set.add(lang));
     Object.keys(module?.imageUrls ?? {}).forEach((lang) => set.add(lang));
     module?.questions?.forEach((question) => {
@@ -173,8 +175,15 @@ export default function ModulePreviewPage({
     [availableLocales, requestedLang],
   );
 
-  const videos = getLocalizedList(module?.videoUrls, locale);
+  const localizedMedia = getLocalizedMediaItems(module?.media, locale);
   const images = getLocalizedList(module?.imageUrls, locale);
+  const videos = getLocalizedList(module?.videoUrls, locale);
+  const mediaItems = localizedMedia.length
+    ? localizedMedia
+    : [
+        ...images.map((url) => ({ id: url, url, type: 'image' as const })),
+        ...videos.map((url) => ({ id: url, url, type: 'video' as const })),
+      ];
   const moduleTitle = getLocalizedValue(module?.title, locale) || 'Emne';
   const summary = getLocalizedValue(module?.summary, locale);
   const bodyHtml = getLocalizedValue(module?.body, locale);
@@ -293,39 +302,40 @@ export default function ModulePreviewPage({
         </div>
       </header>
 
-      {(images.length > 0 || videos.length > 0) && (
+      {mediaItems.length > 0 && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
           <h2 className="text-xl font-semibold text-slate-900">Mediegalleri</h2>
           <div className="mt-4 grid gap-6 md:grid-cols-2">
-            {images.map((url) => (
-              <div
-                key={url}
-                className="relative h-56 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
-              >
-                <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
-              </div>
-            ))}
-            {videos.map((url) => (
-              <div
-                key={url}
-                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-black"
-              >
-                {isYouTubeUrl(url) ? (
-                  <iframe
-                    src={url}
-                    title="Modulvideo"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="aspect-video w-full"
-                  />
-                ) : (
-                  <video controls className="aspect-video w-full">
-                    <source src={url} />
-                    Nettleseren din støtter ikke video.
-                  </video>
-                )}
-              </div>
-            ))}
+            {mediaItems.map((item) =>
+              item.type === 'image' ? (
+                <div
+                  key={item.id}
+                  className="relative h-56 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
+                >
+                  <img src={item.url} alt="Modulbilde" className="h-full w-full object-cover" />
+                </div>
+              ) : (
+                <div
+                  key={item.id}
+                  className="relative overflow-hidden rounded-2xl border border-slate-200 bg-black"
+                >
+                  {isYouTubeUrl(item.url) ? (
+                    <iframe
+                      src={item.url}
+                      title="Modulvideo"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="aspect-video w-full"
+                    />
+                  ) : (
+                    <video controls className="aspect-video w-full">
+                      <source src={item.url} />
+                      Nettleseren din støtter ikke video.
+                    </video>
+                  )}
+                </div>
+              ),
+            )}
           </div>
         </section>
       )}

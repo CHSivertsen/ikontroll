@@ -3,6 +3,16 @@ export type CourseStatus = 'active' | 'inactive';
 export type LocaleStringMap = Record<string, string>;
 export type LocaleStringArrayMap = Record<string, string[]>;
 
+export type ModuleMediaType = 'image' | 'video';
+
+export interface ModuleMediaItem {
+  id: string;
+  url: string;
+  type: ModuleMediaType;
+}
+
+export type LocaleModuleMediaMap = Record<string, ModuleMediaItem[]>;
+
 export interface Course {
   id: string;
   companyId: string;
@@ -34,6 +44,7 @@ export interface CourseModule {
   title: LocaleStringMap;
   summary: LocaleStringMap;
   body?: LocaleStringMap;
+  media?: LocaleModuleMediaMap;
   videoUrls: LocaleStringArrayMap;
   imageUrls: LocaleStringArrayMap;
   order: number;

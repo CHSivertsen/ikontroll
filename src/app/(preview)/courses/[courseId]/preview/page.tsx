@@ -7,6 +7,7 @@ import { useCourse } from '@/hooks/useCourse';
 import { useCourseModules } from '@/hooks/useCourseModules';
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 import type { LocaleStringArrayMap, LocaleStringMap } from '@/types/course';
+import { getLocalizedMediaItems } from '@/utils/media';
 
 const getPreferredLocale = (available: string[]): string => {
   if (!available.length) return 'no';
@@ -185,6 +186,7 @@ export default function CoursePreviewPage({
       if (module.title) Object.keys(module.title).forEach((lang) => set.add(lang));
       if (module.summary) Object.keys(module.summary).forEach((lang) => set.add(lang));
       if (module.body) Object.keys(module.body).forEach((lang) => set.add(lang));
+    if (module.media) Object.keys(module.media).forEach((lang) => set.add(lang));
       Object.keys(module.videoUrls ?? {}).forEach((lang) => set.add(lang));
       Object.keys(module.imageUrls ?? {}).forEach((lang) => set.add(lang));
     });
@@ -305,7 +307,10 @@ export default function CoursePreviewPage({
           {sortedModules.map((module, index) => {
             const isCompleted = completedModules.includes(module.id);
             const moduleProgressPercent = isCompleted ? 100 : 0;
-            const videoCount = getLocalizedList(module.videoUrls, locale).length;
+            const localizedMedia = getLocalizedMediaItems(module.media, locale);
+            const videoCount = localizedMedia.length
+              ? localizedMedia.filter((item) => item.type === 'video').length
+              : getLocalizedList(module.videoUrls, locale).length;
             return (
               <button
                 key={module.id}

@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
+import { normalizeModuleMediaMap } from '@/utils/media';
 import type {
   CourseModule,
   CourseModulePayload,
@@ -105,6 +106,7 @@ export const useCourseModules = (
             title: normalizeLocaleMap(data.title),
             summary: normalizeLocaleMap(data.summary),
             body: normalizeLocaleMap(data.body),
+            media: normalizeModuleMediaMap(data.media, data.imageUrls, data.videoUrls),
             videoUrls: normalizeLocaleArrayMap(data.videoUrls),
             imageUrls: normalizeLocaleArrayMap(data.imageUrls),
             order: orderValue,

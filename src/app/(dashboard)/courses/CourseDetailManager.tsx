@@ -35,6 +35,7 @@ import { db, storage } from '@/lib/firebase';
 import {
   CourseModule,
   CourseModulePayload,
+  LocaleModuleMediaMap,
   LocaleStringArrayMap,
   LocaleStringMap,
 } from '@/types/course';
@@ -81,6 +82,12 @@ const createEmptyLocaleArrayMap = (
   languages: string[],
 ): LocaleStringArrayMap =>
   languages.reduce<LocaleStringArrayMap>((acc, lang) => {
+    acc[lang] = [];
+    return acc;
+  }, {});
+
+const createEmptyLocaleMediaMap = (languages: string[]): LocaleModuleMediaMap =>
+  languages.reduce<LocaleModuleMediaMap>((acc, lang) => {
     acc[lang] = [];
     return acc;
   }, {});
@@ -454,11 +461,13 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
       bodyMap.no = trimmedDescription;
       const videoMap = createEmptyLocaleArrayMap(targetLanguages);
       const imageMap = createEmptyLocaleArrayMap(targetLanguages);
+      const mediaMap = createEmptyLocaleMediaMap(targetLanguages);
 
       const payload: CourseModulePayload = {
         title: titleMap,
         summary: summaryMap,
         body: bodyMap,
+        media: mediaMap,
         videoUrls: videoMap,
         imageUrls: imageMap,
         order: nextOrder,

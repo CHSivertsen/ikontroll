@@ -19,6 +19,7 @@ import {
   getLocalizedValue,
   getPreferredLocale,
 } from '@/utils/localization';
+import { getLocalizedMediaItems } from '@/utils/media';
 import { getTranslation } from '@/utils/translations';
 
 interface ConsumerModuleViewProps {
@@ -51,6 +52,7 @@ export default function ConsumerModuleView({
     if (module.title) Object.keys(module.title).forEach((lang) => set.add(lang));
     if (module.summary) Object.keys(module.summary).forEach((lang) => set.add(lang));
     if (module.body) Object.keys(module.body).forEach((lang) => set.add(lang));
+    if (module.media) Object.keys(module.media).forEach((lang) => set.add(lang));
     Object.keys(module.videoUrls ?? {}).forEach((lang) => set.add(lang));
     Object.keys(module.imageUrls ?? {}).forEach((lang) => set.add(lang));
     module.questions?.forEach((question) => {
@@ -70,15 +72,21 @@ export default function ConsumerModuleView({
 
   const t = getTranslation(locale);
 
-  const videos = getLocalizedList(module.videoUrls, locale);
-  const images = getLocalizedList(module.imageUrls, locale);
-  const mediaItems = useMemo(
-    () => [
-      ...images.map((url) => ({ url, type: 'image' as const })),
-      ...videos.map((url) => ({ url, type: 'video' as const })),
-    ],
-    [images, videos],
-  );
+  const localizedMedia = getLocalizedMediaItems(module.media, locale);
+  const fallbackImages = getLocalizedList(module.imageUrls, locale);
+  const fallbackVideos = getLocalizedList(module.videoUrls, locale);
+  const mediaItems = useMemo(() => {
+    if (localizedMedia.length) {
+      return localizedMedia.map((item) => ({
+        url: item.url,
+        type: item.type,
+      }));
+    }
+    return [
+      ...fallbackImages.map((url) => ({ url, type: 'image' as const })),
+      ...fallbackVideos.map((url) => ({ url, type: 'video' as const })),
+    ];
+  }, [localizedMedia, fallbackImages, fallbackVideos]);
   const moduleTitle = getLocalizedValue(module.title, locale) || t.modules.module;
   const summary = getLocalizedValue(module.summary, locale);
   const rawBodyHtml = getLocalizedValue(module.body, locale);

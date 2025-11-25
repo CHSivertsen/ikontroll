@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
+import { normalizeModuleMediaMap } from '@/utils/media';
 import type {
   CourseModule,
   LocaleStringArrayMap,
@@ -85,6 +86,7 @@ export const useCourseModule = (
             title: normalizeLocaleMap(data.title),
             summary: normalizeLocaleMap(data.summary),
             body: normalizeLocaleMap(data.body),
+            media: normalizeModuleMediaMap(data.media, data.imageUrls, data.videoUrls),
             videoUrls: normalizeLocaleArrayMap(data.videoUrls),
             imageUrls: normalizeLocaleArrayMap(data.imageUrls),
             order: data.order ?? 0,

@@ -3,8 +3,21 @@
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import {
   deleteDoc,
   doc,
@@ -19,9 +32,12 @@ import type {
   CourseModulePayload,
   CourseQuestion,
   CourseQuestionAlternative,
+  LocaleModuleMediaMap,
   LocaleStringArrayMap,
   LocaleStringMap,
+  ModuleMediaItem,
 } from '@/types/course';
+import { ensureMediaLocales, mediaMapToLegacyArrays } from '@/utils/media';
 
 import 'react-quill/dist/quill.snow.css';
 
@@ -139,6 +155,7 @@ const collectLanguagesFromModule = (
   Object.keys(module.title ?? {}).forEach((lang) => collected.add(lang));
   Object.keys(module.summary ?? {}).forEach((lang) => collected.add(lang));
   Object.keys(module.body ?? {}).forEach((lang) => collected.add(lang));
+  Object.keys(module.media ?? {}).forEach((lang) => collected.add(lang));
   Object.keys(module.videoUrls ?? {}).forEach((lang) => collected.add(lang));
   Object.keys(module.imageUrls ?? {}).forEach((lang) => collected.add(lang));
   module.questions.forEach((question) => {
@@ -180,6 +197,7 @@ export default function CourseModuleDetailPage() {
       title: module.title ?? {},
       summary: module.summary ?? {},
       body: module.body ?? {},
+      media: module.media ?? {},
       videoUrls: module.videoUrls ?? {},
       imageUrls: module.imageUrls ?? {},
       order: module.order ?? 0,
@@ -197,6 +215,7 @@ export default function CourseModuleDetailPage() {
       title: ensureLocaleKeys(provisionalDraft.title, discoveredLanguages),
       summary: ensureLocaleKeys(provisionalDraft.summary, discoveredLanguages),
       body: ensureLocaleKeys(provisionalDraft.body, discoveredLanguages),
+      media: ensureMediaLocales(provisionalDraft.media, discoveredLanguages),
       videoUrls: ensureLocaleArrayKeys(provisionalDraft.videoUrls, discoveredLanguages),
       imageUrls: ensureLocaleArrayKeys(provisionalDraft.imageUrls, discoveredLanguages),
       questions: provisionalDraft.questions.map((question) => ({
@@ -237,6 +256,7 @@ export default function CourseModuleDetailPage() {
             title: ensureLocaleKeys(prev.title, nextLanguages),
             summary: ensureLocaleKeys(prev.summary, nextLanguages),
             body: ensureLocaleKeys(prev.body, nextLanguages),
+            media: ensureMediaLocales(prev.media, nextLanguages),
             videoUrls: ensureLocaleArrayKeys(prev.videoUrls, nextLanguages),
             imageUrls: ensureLocaleArrayKeys(prev.imageUrls, nextLanguages),
             questions: prev.questions.map((question) => ({
@@ -265,12 +285,15 @@ export default function CourseModuleDetailPage() {
     try {
       setSaving(true);
       setFormError(null);
+      const normalizedMedia = ensureMediaLocales(draft.media, languages);
+      const { imageUrls, videoUrls } = mediaMapToLegacyArrays(normalizedMedia);
       await updateDoc(doc(db, 'courses', courseId, 'modules', moduleId), {
         title: draft.title ?? {},
         summary: draft.summary ?? {},
         body: draft.body ?? {},
-        videoUrls: draft.videoUrls ?? {},
-        imageUrls: draft.imageUrls ?? {},
+        media: normalizedMedia,
+        videoUrls,
+        imageUrls,
         order: draft.order ?? 0,
         questions: draft.questions ?? [],
         updatedAt: serverTimestamp(),
@@ -415,29 +438,13 @@ export default function CourseModuleDetailPage() {
             activeLanguage={activeLanguage}
           />
 
-          <LocaleArrayEditor
-            label="Videoer"
-            values={draft.videoUrls}
-            onChange={(next) => updateField('videoUrls', next)}
+          <LocaleMediaEditor
+            label="Media"
+            media={draft.media ?? {}}
+            onChange={(next) => updateField('media', next)}
             activeLanguage={activeLanguage}
-            uploadConfig={{
-              accept: 'video/*',
-              buttonLabel: 'Last opp video',
-              buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'videos', file),
-            }}
-            previewType="video"
-          />
-          <LocaleArrayEditor
-            label="Bilder"
-            values={draft.imageUrls}
-            onChange={(next) => updateField('imageUrls', next)}
-            activeLanguage={activeLanguage}
-            uploadConfig={{
-              accept: 'image/*',
-              buttonLabel: 'Last opp bilde',
-              buildPath: (file) => buildModuleAssetPath(courseId, moduleId, 'images', file),
-            }}
-            previewType="image"
+            courseId={courseId}
+            moduleId={moduleId}
           />
 
           <QuestionListEditor
@@ -594,46 +601,38 @@ const LocaleRichEditor = ({
   );
 };
 
-type LocaleArrayUploadConfig = {
-  accept: string;
-  buttonLabel: string;
-  buildPath: (file: File) => string;
-};
-
-const LocaleArrayEditor = ({
+const LocaleMediaEditor = ({
   label,
-  values,
+  media,
   onChange,
   activeLanguage,
-  uploadConfig,
-  previewType,
+  courseId,
+  moduleId,
 }: {
   label: string;
-  values: LocaleStringArrayMap;
-  onChange: (next: LocaleStringArrayMap) => void;
+  media: LocaleModuleMediaMap;
+  onChange: (next: LocaleModuleMediaMap) => void;
   activeLanguage: string;
-  uploadConfig?: LocaleArrayUploadConfig;
-  previewType?: 'image' | 'video';
+  courseId: string;
+  moduleId: string;
 }) => {
-  const activeValues = values?.[activeLanguage] ?? [];
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const items = media?.[activeLanguage] ?? [];
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState<'image' | 'video' | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const updateList = (nextList: string[]) => {
-    onChange({
-      ...(values ?? {}),
-      [activeLanguage]: nextList,
-    });
-  };
+  const updateList = useCallback(
+    (next: ModuleMediaItem[]) => {
+      onChange({
+        ...(media ?? {}),
+        [activeLanguage]: next,
+      });
+    },
+    [media, activeLanguage, onChange],
+  );
 
-  const updateValue = (index: number, value: string) => {
-    const next = [...activeValues];
-    next[index] = value;
-    updateList(next);
-  };
-
-  const maybeDeleteUploadedFile = async (url: string) => {
-    if (!uploadConfig) return;
+  const maybeDeleteUploadedFile = useCallback(async (url: string) => {
     if (!url.includes('firebasestorage.googleapis.com')) return;
     try {
       const urlObj = new URL(url);
@@ -649,119 +648,263 @@ const LocaleArrayEditor = ({
     } catch (err) {
       console.warn('Kunne ikke slette opplastet fil', err);
     }
+  }, []);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return;
+    const oldIndex = items.findIndex((item) => item.id === event.active.id);
+    const newIndex = items.findIndex((item) => item.id === event.over?.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    updateList(arrayMove(items, oldIndex, newIndex));
   };
 
-  const removeValue = (index: number) => {
-    const target = activeValues[index];
-    updateList(activeValues.filter((_, idx) => idx !== index));
+  const handleRemove = (id: string) => {
+    const target = items.find((item) => item.id === id);
+    updateList(items.filter((item) => item.id !== id));
     if (target) {
-      void maybeDeleteUploadedFile(target);
+      void maybeDeleteUploadedFile(target.url);
     }
   };
 
-  const handleUploadClick = () => {
-    if (!uploadConfig) return;
-    fileInputRef.current?.click();
+  const handleTypeChange = (id: string, type: ModuleMediaItem['type']) => {
+    updateList(
+      items.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              type,
+            }
+          : item,
+      ),
+    );
   };
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (!uploadConfig) return;
+  const handleUploadClick = (type: 'image' | 'video') => {
+    if (type === 'image') {
+      imageInputRef.current?.click();
+    } else {
+      videoInputRef.current?.click();
+    }
+  };
+
+  const handleFileChange = async (
+    event: ChangeEvent<HTMLInputElement>,
+    type: 'image' | 'video',
+  ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    setUploading(true);
+    setUploading(type);
     try {
-      const storagePath = uploadConfig.buildPath(file);
+      const storagePath = buildModuleAssetPath(
+        courseId,
+        moduleId,
+        type === 'image' ? 'images' : 'videos',
+        file,
+      );
       const storageRef = ref(storage, storagePath);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
-      updateList([...activeValues, url]);
+      updateList([
+        ...items,
+        {
+          id: generateId(),
+          url,
+          type,
+        },
+      ]);
     } catch (err) {
       console.error('Failed to upload file', err);
       alert('Kunne ikke laste opp filen. Prøv igjen.');
     } finally {
-      setUploading(false);
+      setUploading(null);
     }
   };
 
+  const handleAddUrl = (type: 'image' | 'video') => {
+    const promptLabel =
+      type === 'image'
+        ? 'Lim inn URL til bilde'
+        : 'Lim inn URL til video (YouTube eller videofil)';
+    const next = window.prompt(promptLabel);
+    if (!next) return;
+    const trimmed = next.trim();
+    if (!trimmed) return;
+    updateList([
+      ...items,
+      {
+        id: generateId(),
+        url: trimmed,
+        type,
+      },
+    ]);
+  };
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-700">{label}</p>
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           {activeLanguage.toUpperCase()}
         </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {activeValues.map((url, index) => (
-          <div key={index} className="space-y-2 rounded-2xl border border-slate-100 p-3">
-            {previewType === 'image' && url && (
-              <div className="flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                <img src={url} alt="Forhåndsvis bilde" className="h-full w-full object-cover" />
-              </div>
-            )}
-            {previewType === 'video' && url && (
-              <div className="flex h-32 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-black">
-                {isYouTubeUrl(url) ? (
-                  <iframe
-                    src={url}
-                    title="Forhåndsvis video"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="h-full w-full"
-                  />
-                ) : (
-                  <video controls className="h-full w-full object-cover">
-                    <source src={url} />
-                    Nettleseren støtter ikke videoavspilling.
-                  </video>
-                )}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                value={url}
-                onChange={(e) => updateValue(index, e.target.value)}
-                className="flex-1 rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              />
-              <button
-                type="button"
-                onClick={() => removeValue(index)}
-                className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-              >
-                Fjern
-              </button>
+      {items.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+          Ingen media er lagt til for dette språket ennå.
+        </div>
+      ) : (
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {items.map((item) => (
+                <SortableMediaCard
+                  key={item.id}
+                  item={item}
+                  onRemove={() => handleRemove(item.id)}
+                  onTypeChange={(type) => handleTypeChange(item.id, type)}
+                />
+              ))}
             </div>
-          </div>
-        ))}
-      </div>
+          </SortableContext>
+        </DndContext>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => updateList([...activeValues, ''])}
+          onClick={() => handleUploadClick('image')}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={uploading === 'image'}
+        >
+          {uploading === 'image' ? 'Laster opp …' : 'Last opp bilde'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleUploadClick('video')}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={uploading === 'video'}
+        >
+          {uploading === 'video' ? 'Laster opp …' : 'Last opp video'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleAddUrl('image')}
           className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
         >
-          Legg til URL
+          Legg til bilde-URL
         </button>
-        {uploadConfig && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={uploadConfig.accept}
-              className="hidden"
-              onChange={handleFileChange}
+        <button
+          type="button"
+          onClick={() => handleAddUrl('video')}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+        >
+          Legg til video-URL
+        </button>
+      </div>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => handleFileChange(event, 'image')}
+      />
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={(event) => handleFileChange(event, 'video')}
+      />
+    </div>
+  );
+};
+
+const SortableMediaCard = ({
+  item,
+  onRemove,
+  onTypeChange,
+}: {
+  item: ModuleMediaItem;
+  onRemove: () => void;
+  onTypeChange: (type: ModuleMediaItem['type']) => void;
+}) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  });
+  const style = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${
+        isDragging ? 'ring-2 ring-slate-300' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab rounded border border-slate-200 px-2 py-1 text-slate-700"
+          aria-label="Flytt"
+        >
+          ⇅
+        </button>
+        <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] uppercase tracking-wide text-slate-600">
+          {item.type === 'video' ? 'Video' : 'Bilde'}
+        </span>
+      </div>
+      <div className="flex flex-col gap-3">
+        <div className="flex h-48 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+          {item.type === 'image' ? (
+            <img src={item.url} alt="Forhåndsvis media" className="h-full w-full object-cover" />
+          ) : isYouTubeUrl(item.url) ? (
+            <iframe
+              src={item.url}
+              title="Video"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="h-full w-full"
             />
-            <button
-              type="button"
-              onClick={handleUploadClick}
-              disabled={uploading}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          ) : (
+            <video controls className="h-full w-full object-cover">
+              <source src={item.url} />
+              Nettleseren støtter ikke videoavspilling.
+            </video>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-600">
+            Type
+            <select
+              value={item.type}
+              onChange={(e) => onTypeChange(e.target.value as ModuleMediaItem['type'])}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
-              {uploading ? 'Laster opp …' : uploadConfig.buttonLabel}
-            </button>
-          </>
-        )}
+              <option value="image">Bilde</option>
+              <option value="video">Video</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => window.open(item.url, '_blank')}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+          >
+            Åpne
+          </button>
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-xl border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
+          >
+            Fjern
+          </button>
+        </div>
       </div>
     </div>
   );
