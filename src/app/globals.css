@@ -23,3 +23,59 @@ input,
 textarea {
   font: inherit;
 }
+
+/* Quill alignment helpers for rendering rich text */
+.ql-align-left {
+  text-align: left;
+}
+
+.ql-align-center {
+  text-align: center;
+}
+
+.ql-align-right {
+  text-align: right;
+}
+
+.ql-align-justify {
+  text-align: justify;
+}
+
+.ql-indent-1 {
+  margin-left: 1.5rem;
+}
+
+.ql-indent-2 {
+  margin-left: 3rem;
+}
+
+.ql-indent-3 {
+  margin-left: 4.5rem;
+}
+
+.ql-indent-4 {
+  margin-left: 6rem;
+}
+
+.ql-indent-5 {
+  margin-left: 7.5rem;
+}
+
+.prose ol,
+.prose ul {
+  margin: 1rem 0 1rem 1.5rem;
+  padding-left: 1.25rem;
+  list-style-position: outside;
+}
+
+.prose ol {
+  list-style-type: decimal;
+}
+
+.prose ul {
+  list-style-type: disc;
+}
+
+.prose li {
+  margin: 0.35rem 0;
+}

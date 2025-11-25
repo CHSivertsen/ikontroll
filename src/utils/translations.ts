@@ -21,6 +21,13 @@ export const translations = {
       loggingIn: 'Logger inn...',
       errorInvalidCredentials: 'Feil e-post eller passord.',
       loggingYouIn: 'Logger deg inn...',
+      forgotPasswordLink: 'Glemt passord?',
+      forgotPasswordDescription:
+        'Skriv inn e-posten din, så sender vi en lenke slik at du kan tilbakestille passordet.',
+      sendReset: 'Send lenke',
+      resetSent: 'Vi har sendt deg en e-post med instruksjoner.',
+      resetError: 'Kunne ikke sende e-post. Sjekk adressen og prøv igjen.',
+      backToLogin: 'Tilbake til innlogging',
     },
     nav: {
       myCourses: 'Mine kurs',
@@ -92,6 +99,13 @@ export const translations = {
       loggingIn: 'Logging in...',
       errorInvalidCredentials: 'Invalid email or password.',
       loggingYouIn: 'Logging you in...',
+      forgotPasswordLink: 'Forgot password?',
+      forgotPasswordDescription:
+        'Enter your email address and we will send you a link to reset your password.',
+      sendReset: 'Send link',
+      resetSent: 'We just sent you an email with instructions.',
+      resetError: 'Could not send the email. Please check the address and try again.',
+      backToLogin: 'Back to login',
     },
     nav: {
       myCourses: 'My courses',

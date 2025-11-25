@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
 
@@ -13,51 +13,51 @@ export const useCourseUsersProgress = (courseId: string | null, userIds: string[
 
   useEffect(() => {
     if (!courseId || !sortedIds.length) {
-      setProgressMap({});
-      setLoading(false);
-      return;
+      const timer = setTimeout(() => {
+        setProgressMap({});
+        setLoading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
-    let cancelled = false;
-    const fetchProgress = async () => {
-      setLoading(true);
-      const results: Record<string, string[]> = {};
-      try {
-        await Promise.all(
-          sortedIds.map(async (uid) => {
-            try {
-              const docRef = doc(db, 'users', uid, 'courseProgress', courseId);
-              const snapshot = await getDoc(docRef);
-              if (snapshot.exists()) {
-                const data = snapshot.data();
-                results[uid] = Array.isArray(data.completedModules) ? data.completedModules : [];
-              } else {
-                results[uid] = [];
-              }
-            } catch (error) {
-              console.warn(`Failed to fetch progress for user ${uid}`, error);
-              results[uid] = [];
-            }
-          }),
-        );
-        if (!cancelled) {
-          setProgressMap(results);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to fetch course progress for users', error);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
+    const unsubscribes: Array<() => void> = [];
+    const loadingTimer = setTimeout(() => setLoading(true), 0);
 
-    fetchProgress();
+    sortedIds.forEach((uid) => {
+      const docRef = doc(db, 'users', uid, 'courseProgress', courseId);
+      const unsubscribe = onSnapshot(
+        docRef,
+        (snapshot) => {
+          setProgressMap((prev) => {
+            const next = { ...prev };
+            if (snapshot.exists()) {
+              const data = snapshot.data();
+              next[uid] = Array.isArray(data.completedModules)
+                ? data.completedModules
+                : [];
+            } else {
+              next[uid] = [];
+            }
+            return next;
+          });
+          setLoading(false);
+        },
+        (error) => {
+          console.warn(`Failed to subscribe to progress for user ${uid}`, error);
+          setProgressMap((prev) => {
+            const next = { ...prev };
+            next[uid] = [];
+            return next;
+          });
+          setLoading(false);
+        },
+      );
+      unsubscribes.push(unsubscribe);
+    });
 
     return () => {
-      cancelled = true;
+      clearTimeout(loadingTimer);
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
     };
   }, [courseId, sortedIds]);
 

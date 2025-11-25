@@ -73,7 +73,18 @@ export default function ConsumerModuleView({
   const images = getLocalizedList(module.imageUrls, locale);
   const moduleTitle = getLocalizedValue(module.title, locale) || t.modules.module;
   const summary = getLocalizedValue(module.summary, locale);
-  const bodyHtml = getLocalizedValue(module.body, locale);
+  const rawBodyHtml = getLocalizedValue(module.body, locale);
+  const bodyHtml = useMemo(() => {
+    if (!rawBodyHtml) return '';
+    const containsHtmlTags = /<\/?[a-z][\s\S]*>/i.test(rawBodyHtml);
+    if (containsHtmlTags) {
+      return rawBodyHtml;
+    }
+    const parts = rawBodyHtml.split('\n').map((line) => line.trim());
+    return parts
+      .map((line) => (line.length ? `<p>${line}</p>` : '<br />'))
+      .join('');
+  }, [rawBodyHtml]);
   const questions = module.questions ?? [];
   const isModuleCompleted = completedModules.includes(module.id);
 
@@ -130,12 +141,6 @@ export default function ConsumerModuleView({
           
         if (allOtherModulesCompleted) {
           setShowCourseComplete(true);
-          confetti({
-            particleCount: 100,
-            spread: 70,
-            origin: { y: 0.6 },
-            colors: ['#10b981', '#34d399', '#059669', '#ffffff'],
-          });
         }
       }).catch((err) => {
         console.error('Failed to update module progress', err);
@@ -148,8 +153,33 @@ export default function ConsumerModuleView({
     questions.length,
     setModuleCompletion,
     completedModules,
-    modules
+    modules,
   ]);
+
+  useEffect(() => {
+    if (!showCourseComplete) {
+      return;
+    }
+
+    confetti({
+      particleCount: 50,
+      spread: 65,
+      angle: 115,
+      startVelocity: 40,
+      gravity: 1.05,
+      origin: { x: 0.48, y: 0.58 },
+      colors: ['#10b981', '#34d399', '#059669', '#f8fafc'],
+    });
+    confetti({
+      particleCount: 50,
+      spread: 65,
+      angle: 65,
+      startVelocity: 40,
+      gravity: 1.05,
+      origin: { x: 0.52, y: 0.58 },
+      colors: ['#10b981', '#34d399', '#059669', '#f8fafc'],
+    });
+  }, [showCourseComplete]);
 
   // Find next module
   const nextModuleId = useMemo(() => {
@@ -165,8 +195,9 @@ export default function ConsumerModuleView({
     }
   };
 
+  const courseOverviewHref = `${basePath}/${course.id}?lang=${locale}`;
   const handleFinishCourse = () => {
-    router.push(basePath);
+    router.push(courseOverviewHref);
   };
 
   const scorePercentage = questions.length
@@ -188,6 +219,7 @@ export default function ConsumerModuleView({
           </p>
         </div>
         <button
+          type="button"
           onClick={handleFinishCourse}
           className="mt-4 rounded-2xl bg-slate-900 px-8 py-3 text-base font-semibold text-white transition hover:bg-slate-800"
         >
@@ -267,9 +299,8 @@ export default function ConsumerModuleView({
 
       {bodyHtml && (
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10">
-          <h2 className="text-xl font-semibold text-slate-900">{t.modules.content}</h2>
           <div
-            className="prose prose-slate mt-4 max-w-none"
+            className="prose prose-slate max-w-none"
             dangerouslySetInnerHTML={{ __html: bodyHtml }}
           />
         </section>
@@ -338,29 +369,33 @@ export default function ConsumerModuleView({
                   {t.modules.allCorrect}
                 </div>
               )}
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-3">
+                  {incorrectQuestions.length > 0 && (
+                    <button
+                    type="button"
+                    onClick={resetQuiz}
+                      className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {t.modules.retry}
+                    </button>
+                  )}
+                  <Link
+                    href={courseOverviewHref}
+                    className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    {t.modules.backToOverview}
+                  </Link>
+                </div>
                 {incorrectQuestions.length === 0 && nextModuleId && !showCourseComplete && (
                   <button
+                  type="button"
                     onClick={handleGoToNextModule}
                     className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                   >
                     {t.modules.nextModule}
                   </button>
                 )}
-                {incorrectQuestions.length > 0 && (
-                  <button
-                    onClick={resetQuiz}
-                    className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    {t.modules.retry}
-                  </button>
-                )}
-                <button
-                  onClick={() => router.push(`${basePath}/${course.id}?lang=${locale}`)}
-                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  {t.modules.backToOverview}
-                </button>
               </div>
             </div>
           ) : currentQuestion ? (
