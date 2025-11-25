@@ -16,14 +16,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  
-  // Simple locale detection for login page
-  const [locale, setLocale] = useState('no');
 
-  useEffect(() => {
-    const detected = getPreferredLocale(['no', 'en']);
-    setLocale(detected);
-  }, []);
+  // Simple locale detection for login page
+  const [locale] = useState(() => getPreferredLocale(['no', 'en']));
 
   const t = getTranslation(locale);
 

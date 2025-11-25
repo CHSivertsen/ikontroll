@@ -16,6 +16,7 @@ interface UserPayloadBody {
   phone: string;
   roles: CompanyUserRole[];
   status: 'active' | 'inactive';
+  assignedCourseIds?: string[];
 }
 
 interface CompanyUserPayload {
@@ -37,7 +38,7 @@ const validateBasePayload = (body: Partial<CompanyUserPayload> | null) => {
 
 const normalizeMemberships = (value: unknown) => {
   if (!Array.isArray(value)) {
-    return [] as { customerId: string; roles: CompanyUserRole[] }[];
+    return [] as { customerId: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] }[];
   }
   return value
     .map((entry) => {
@@ -47,9 +48,10 @@ const normalizeMemberships = (value: unknown) => {
         'customerId' in entry &&
         'roles' in entry
       ) {
-        const { customerId, roles } = entry as {
+        const { customerId, roles, assignedCourseIds } = entry as {
           customerId?: unknown;
           roles?: unknown;
+          assignedCourseIds?: unknown;
         };
         if (typeof customerId === 'string') {
           const validRoles = Array.isArray(roles)
@@ -58,7 +60,12 @@ const normalizeMemberships = (value: unknown) => {
                   role === 'admin' || role === 'user',
               )
             : [];
-          return { customerId, roles: validRoles };
+          
+          const validAssignedCourseIds = Array.isArray(assignedCourseIds)
+            ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
+            : undefined;
+
+          return { customerId, roles: validRoles, assignedCourseIds: validAssignedCourseIds };
         }
       }
       return null;
@@ -66,22 +73,31 @@ const normalizeMemberships = (value: unknown) => {
     .filter(
       (
         membership,
-      ): membership is { customerId: string; roles: CompanyUserRole[] } =>
+      ): membership is { customerId: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] } =>
         membership !== null,
     );
 };
 
 const upsertMembership = (
-  memberships: { customerId: string; customerName?: string; roles: CompanyUserRole[] }[],
+  memberships: { customerId: string; customerName?: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] }[],
   customerId: string,
   customerName: string | undefined,
   roles: CompanyUserRole[],
+  assignedCourseIds?: string[]
 ) => {
   const filteredRoles = Array.from(new Set(roles));
+  // Find existing membership to preserve other fields if needed, though we replace completely now
   const filteredMemberships = memberships.filter(
     (membership) => membership.customerId !== customerId,
   );
-  filteredMemberships.push({ customerId, customerName, roles: filteredRoles });
+  
+  filteredMemberships.push({ 
+    customerId, 
+    customerName, 
+    roles: filteredRoles,
+    assignedCourseIds: assignedCourseIds 
+  });
+  
   return filteredMemberships;
 };
 
@@ -102,7 +118,13 @@ const upsertUserDocument = async ({
   const snapshot = await userDocRef.get();
   const existingData = snapshot.exists ? snapshot.data() : null;
   const memberships = normalizeMemberships(existingData?.customerMemberships);
-  const nextMemberships = upsertMembership(memberships, customerId, customerName, user.roles);
+  const nextMemberships = upsertMembership(
+    memberships, 
+    customerId, 
+    customerName, 
+    user.roles,
+    user.assignedCourseIds // Pass assigned courses
+  );
 
   await userDocRef.set(
     {
@@ -287,4 +309,3 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
-

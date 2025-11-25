@@ -22,18 +22,19 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
 
   useEffect(() => {
     if (!courseId || !firebaseUser?.uid) {
-      // Avoid setting state if it's already empty/false to prevent loops
-      if (completedModulesRef.current.length > 0) {
+      const timer = setTimeout(() => {
         setCompletedModules([]);
         completedModulesRef.current = [];
-      }
-      setLoading((prev) => (prev ? false : prev));
-      setError((prev) => (prev ? null : prev));
-      return;
+        setLoading(false);
+        setError(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
     const progressRef = doc(db, 'users', firebaseUser.uid, 'courseProgress', courseId);
-    setLoading(true);
+    const loadingTimer = setTimeout(() => {
+      setLoading(true);
+    }, 0);
 
     const unsubscribe = onSnapshot(
       progressRef,
@@ -53,7 +54,10 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
       },
     );
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(loadingTimer);
+      unsubscribe();
+    };
   }, [courseId, firebaseUser?.uid]);
 
   useEffect(() => {
@@ -94,7 +98,7 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
         throw err;
       }
     },
-    [courseId, firebaseUser?.uid],
+    [courseId, firebaseUser],
   );
 
   return {
@@ -117,13 +121,15 @@ export const useAllCourseProgress = () => {
 
   useEffect(() => {
     if (!firebaseUser?.uid) {
-      setLoading((prev) => (prev ? false : prev));
-      setProgress((prev) => (prev.length ? [] : prev));
-      return;
+      const timer = setTimeout(() => {
+        setLoading(false);
+        setProgress([]);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
     const q = query(collection(db, 'users', firebaseUser.uid, 'courseProgress'));
-    
+
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -141,7 +147,7 @@ export const useAllCourseProgress = () => {
       (error) => {
         console.error('Failed to fetch all course progress', error);
         setLoading(false);
-      }
+      },
     );
 
     return () => unsubscribe();

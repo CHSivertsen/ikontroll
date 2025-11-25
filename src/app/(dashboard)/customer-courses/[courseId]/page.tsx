@@ -1,0 +1,329 @@
+'use client';
+
+import { useParams, useRouter } from 'next/navigation';
+import { useMemo, useState } from 'react';
+
+import { useAuth } from '@/context/AuthContext';
+import { useCompanyUsers } from '@/hooks/useCompanyUsers';
+import { useCourse } from '@/hooks/useCourse';
+import { useCourseModules } from '@/hooks/useCourseModules';
+import { useCourseUsersProgress } from '@/hooks/useCourseUsersProgress';
+import { useCustomer } from '@/hooks/useCustomer';
+import type { CompanyUser, CustomerMembership } from '@/types/companyUser';
+import { getLocalizedValue } from '@/utils/localization';
+
+export default function CourseDelegationPage() {
+  const params = useParams();
+  const courseId = params.courseId as string;
+  const router = useRouter();
+  const { activeCustomerId, isCustomerAdmin } = useAuth();
+
+  // 1. Fetch Course Details
+  const { course, loading: courseLoading } = useCourse(courseId);
+  // 2. Fetch Modules (to calculate progress percentage)
+  const { modules, loading: modulesLoading } = useCourseModules(courseId);
+  
+  // 3. Fetch Customer (to verify ownership/context)
+  const { customer } = useCustomer(null, activeCustomerId);
+  
+  // 4. Fetch Users
+  const {
+    users,
+    loading: usersLoading,
+    updateUser,
+  } = useCompanyUsers(customer?.createdByCompanyId ?? null, activeCustomerId);
+
+  // 5. Fetch Progress for these users
+  const userIds = useMemo(
+    () => users.map((u) => u.authUid ?? u.id).filter(Boolean),
+    [users],
+  );
+  const { progressMap } = useCourseUsersProgress(courseId, userIds);
+
+  // UI State for selection
+  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Derived data
+  const totalModules = modules.length;
+
+  // Filter logic
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      const name = `${user.firstName} ${user.lastName}`.toLowerCase();
+      return name.includes(searchTerm.toLowerCase()) || user.email.toLowerCase().includes(searchTerm.toLowerCase());
+    });
+  }, [users, searchTerm]);
+
+  // Assignment toggling
+  const handleToggleAccess = async (
+    userId: string,
+    currentAssigned: boolean,
+    user: CompanyUser,
+  ) => {
+    if (isUpdating) return;
+    setIsUpdating(true);
+    
+    try {
+      // We need to get the current membership and update assignedCourseIds
+      const membership = user.customerMemberships.find(
+        (m: CustomerMembership) => m.customerId === activeCustomerId,
+      );
+      if (!membership) return;
+
+      const currentCourses = membership.assignedCourseIds ?? [];
+      const newCourses = currentAssigned 
+        ? currentCourses.filter((id: string) => id !== courseId)
+        : [...currentCourses, courseId];
+
+      await updateUser(
+        user.id,
+        {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          roles: membership.roles,
+          status: user.status,
+          assignedCourseIds: newCourses,
+        },
+        user.authUid,
+        membership.customerName
+      );
+    } catch (err) {
+      console.error('Failed to update assignment', err);
+      alert('Kunne ikke oppdatere tildeling.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedUsers.size === filteredUsers.length) {
+      setSelectedUsers(new Set());
+    } else {
+      setSelectedUsers(new Set(filteredUsers.map(u => u.id)));
+    }
+  };
+
+  const handleToggleSelect = (id: string) => {
+    const next = new Set(selectedUsers);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedUsers(next);
+  };
+
+  const handleBulkAssign = async (assign: boolean) => {
+    if (!selectedUsers.size || isUpdating) return;
+    setIsUpdating(true);
+    
+    try {
+      await Promise.all(
+        Array.from(selectedUsers).map(async (userId) => {
+          const user = users.find((u) => u.id === userId);
+          if (!user) return;
+
+          const membership = user.customerMemberships.find(
+            (m: CustomerMembership) => m.customerId === activeCustomerId,
+          );
+          if (!membership) return;
+
+          const currentCourses = membership.assignedCourseIds ?? [];
+          const hasCourse = currentCourses.includes(courseId);
+
+          if (assign && hasCourse) return;
+          if (!assign && !hasCourse) return;
+
+          const newCourses = assign
+            ? [...currentCourses, courseId]
+            : currentCourses.filter((id: string) => id !== courseId);
+
+          await updateUser(
+            user.id,
+            {
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              phone: user.phone,
+              roles: membership.roles,
+              status: user.status,
+              assignedCourseIds: newCourses,
+            },
+            user.authUid,
+            membership.customerName,
+          );
+        }),
+      );
+      setSelectedUsers(new Set());
+    } catch (err) {
+      console.error('Bulk update failed', err);
+      alert('Noe gikk galt under masseoppdatering.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  if (!isCustomerAdmin || !activeCustomerId) {
+    return null; // Or redirect handled in layout
+  }
+
+  if (courseLoading || modulesLoading || usersLoading) {
+    return <div className="p-8 text-center text-slate-500">Laster...</div>;
+  }
+
+  if (!course) {
+    return <div className="p-8 text-center text-red-500">Fant ikke kurset.</div>;
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <button 
+            onClick={() => router.back()} 
+            className="mb-2 text-sm font-medium text-slate-500 hover:text-slate-900"
+          >
+            ← Tilbake
+          </button>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {getLocalizedValue(course.title, 'no')}
+          </h1>
+          <p className="text-slate-500">Administrer tilgang og se fremdrift</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <input 
+              type="text" 
+              placeholder="Søk etter bruker..." 
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-slate-400 focus:outline-none"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          {selectedUsers.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-500">{selectedUsers.size} valgt</span>
+              <button 
+                onClick={() => handleBulkAssign(true)}
+                disabled={isUpdating}
+                className="rounded-xl bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-200 disabled:opacity-50"
+              >
+                Gi tilgang
+              </button>
+              <button 
+                onClick={() => handleBulkAssign(false)}
+                disabled={isUpdating}
+                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+              >
+                Fjern tilgang
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-slate-200">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="w-10 px-4 py-3">
+                  <input 
+                    type="checkbox" 
+                    className="rounded border-slate-300"
+                    checked={filteredUsers.length > 0 && selectedUsers.size === filteredUsers.length}
+                    onChange={handleSelectAll}
+                  />
+                </th>
+                <th className="px-4 py-3">Bruker</th>
+                <th className="px-4 py-3">Tilgang</th>
+                <th className="px-4 py-3">Fremdrift</th>
+                <th className="px-4 py-3 text-right">Handling</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredUsers.map(user => {
+                const membership = user.customerMemberships.find(m => m.customerId === activeCustomerId);
+                const isAssigned = membership?.assignedCourseIds?.includes(courseId) ?? false;
+                const progressKey = user.authUid ?? user.id;
+                const completedModules = progressMap[progressKey] ?? [];
+                const completedCount = completedModules.length;
+                // Calculate progress based on current total modules
+                // Note: If user completed modules that are deleted, count might be off visually > 100%.
+                // We cap at 100% visually.
+                const progressPercent = totalModules > 0 
+                  ? Math.min(100, Math.round((completedCount / totalModules) * 100)) 
+                  : 0;
+
+                return (
+                  <tr key={user.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <input 
+                        type="checkbox" 
+                        className="rounded border-slate-300"
+                        checked={selectedUsers.has(user.id)}
+                        onChange={() => handleToggleSelect(user.id)}
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">{user.firstName} {user.lastName}</div>
+                      <div className="text-xs text-slate-500">{user.email}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {isAssigned ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                          Tildelt
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-500/10">
+                          Ikke tildelt
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                          <div 
+                            className={`h-full rounded-full transition-all ${progressPercent === 100 ? 'bg-emerald-500' : 'bg-slate-900'}`} 
+                            style={{ width: `${progressPercent}%` }} 
+                          />
+                        </div>
+                        <span className="text-xs font-medium text-slate-600">{progressPercent}%</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        {completedCount} av {totalModules} moduler
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => handleToggleAccess(user.id, isAssigned, user)}
+                        disabled={isUpdating}
+                        className={`text-xs font-medium ${
+                          isAssigned 
+                            ? 'text-red-600 hover:text-red-700' 
+                            : 'text-emerald-600 hover:text-emerald-700'
+                        }`}
+                      >
+                        {isAssigned ? 'Fjern tilgang' : 'Gi tilgang'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredUsers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                    Ingen brukere funnet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

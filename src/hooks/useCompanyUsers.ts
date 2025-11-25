@@ -70,10 +70,15 @@ export const useCompanyUsers = (
                 'customerId' in membership &&
                 'roles' in membership
               ) {
-                const { customerId: membershipCustomerId, roles } = membership as {
+                const {
+                  customerId: membershipCustomerId,
+                  roles,
+                  assignedCourseIds,
+                } = membership as {
                   customerId?: string;
                   roles?: unknown;
                   customerName?: unknown;
+                  assignedCourseIds?: unknown;
                 };
                 if (typeof membershipCustomerId === 'string') {
                   const roleList = Array.isArray(roles)
@@ -82,6 +87,10 @@ export const useCompanyUsers = (
                           role === 'admin' || role === 'user',
                       )
                     : [];
+                  const courseIds = Array.isArray(assignedCourseIds)
+                    ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
+                    : undefined;
+
                   return {
                     customerId: membershipCustomerId,
                     customerName:
@@ -90,6 +99,7 @@ export const useCompanyUsers = (
                         ? ((membership as { customerName: string }).customerName)
                         : undefined,
                     roles: roleList,
+                    assignedCourseIds: courseIds,
                   };
                 }
               }

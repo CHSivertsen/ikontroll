@@ -1,101 +1,118 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import { useAuth } from '@/context/AuthContext';
 import { useConsumerCourses } from '@/hooks/useConsumerCourses';
 import { useCustomer } from '@/hooks/useCustomer';
 import type { Course } from '@/types/course';
+import type { CustomerMembership } from '@/types/companyUser';
 import { getLocalizedValue, getPreferredLocale } from '@/utils/localization';
 import { getTranslation } from '@/utils/translations';
-import { useCourseProgress } from '@/hooks/useCourseProgress';
 import { useCourseModules } from '@/hooks/useCourseModules';
+import { useCourseProgress } from '@/hooks/useCourseProgress';
 
 export default function MyCoursesPage() {
-  const { profile } = useAuth();
-  const [locale, setLocale] = useState('no');
-
-  useEffect(() => {
-    setLocale(getPreferredLocale(['no', 'en']));
-  }, []);
-
+  const { profile, activeCustomerId, setActiveCustomerId } = useAuth();
+  const [locale] = useState(() => getPreferredLocale(['no', 'en']));
   const t = getTranslation(locale);
 
-  const customerIds = useMemo(() => 
-    profile?.customerMemberships?.map(m => m.customerId) ?? [], 
-    [profile]
+  const memberships = useMemo(
+    () => (profile?.customerMemberships as CustomerMembership[] | undefined) ?? [],
+    [profile?.customerMemberships],
   );
 
-  return (
-    <div className="space-y-10">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold text-slate-900">{t.courses.title}</h1>
-        <p className="text-slate-500">
-          {t.courses.subtitle}
-        </p>
-      </div>
+  const selectedCustomerId = activeCustomerId ?? memberships[0]?.customerId ?? null;
 
-      {customerIds.length === 0 ? (
+  const selectedMembership =
+    memberships.find((membership) => membership.customerId === selectedCustomerId) ??
+    memberships[0];
+
+  const { customer: selectedCustomer } = useCustomer(null, selectedMembership?.customerId ?? null);
+
+  const assignedCourseIds = selectedMembership?.assignedCourseIds ?? [];
+  const { courses, loading } = useConsumerCourses(assignedCourseIds);
+
+  const handleSelectCustomer = (customerId: string) => {
+    setActiveCustomerId(customerId);
+  };
+
+  if (!memberships.length) {
+    return (
+      <div className="space-y-10">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold text-slate-900">{t.courses.title}</h1>
+          <p className="text-slate-500">{t.courses.subtitle}</p>
+        </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
           {t.courses.noAccess}
         </div>
-      ) : (
-        <div className="space-y-12">
-          {profile?.customerMemberships?.map((membership) => (
-            <CustomerCoursesSection
-              key={membership.customerId}
-              customerId={membership.customerId}
-              customerName={membership.customerName}
-              locale={locale}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CustomerCoursesSection({ 
-  customerId, 
-  customerName,
-  locale
-}: { 
-  customerId: string; 
-  customerName?: string; 
-  locale: string;
-}) {
-  const { customer, loading: customerLoading } = useCustomer(null, customerId);
-  const { courses, loading: coursesLoading } = useConsumerCourses(customer?.courseIds ?? []);
-  const t = getTranslation(locale);
-
-  if (customerLoading) {
-    return <div className="animate-pulse h-40 rounded-2xl bg-slate-100"></div>;
-  }
-
-  if (!customer || (customer.courseIds.length === 0)) {
-    return null;
-  }
-
-  if (coursesLoading) {
-     return <div className="animate-pulse h-40 rounded-2xl bg-slate-100"></div>;
-  }
-  
-  if (courses.length === 0) {
-      return null;
+      </div>
+    );
   }
 
   return (
-    <section className="space-y-6">
-      <h2 className="text-xl font-semibold text-slate-900">
-        {t.courses.courseFrom} {customer.companyName || customerName}
-      </h2>
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {courses.map((course) => (
-          <ConsumerCourseCard key={course.id} course={course} locale={locale} />
-        ))}
+    <div className="space-y-8">
+      <div className="space-y-2">
+        <h1 className="text-3xl font-bold text-slate-900">{t.courses.title}</h1>
+        <p className="text-slate-500">{t.courses.subtitle}</p>
       </div>
-    </section>
+
+      {memberships.length > 1 && (
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          {memberships.map((membership) => {
+            const isActive = membership.customerId === selectedMembership?.customerId;
+            return (
+              <button
+                key={membership.customerId}
+                onClick={() => handleSelectCustomer(membership.customerId)}
+                className={`rounded-full px-4 py-1 text-sm font-semibold transition ${
+                  isActive
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {membership.customerName ?? membership.customerId}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <section className="space-y-6">
+        <h2 className="text-xl font-semibold text-slate-900">
+        {t.courses.courseFrom}{' '}
+          {selectedCustomer?.companyName ??
+            selectedMembership?.customerName ??
+            selectedMembership?.customerId ??
+            ''}
+        </h2>
+
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="h-40 animate-pulse rounded-2xl bg-slate-100" />
+            ))}
+          </div>
+        ) : assignedCourseIds.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+            Ingen kurs er tildelt denne kunden ennå.
+          </div>
+        ) : courses.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+            Kursdetaljer kunne ikke lastes inn.
+          </div>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {courses.map((course) => (
+              <ConsumerCourseCard key={course.id} course={course} locale={locale} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -103,11 +120,7 @@ function ConsumerCourseCard({ course, locale }: { course: Course; locale: string
   const { completedModules } = useCourseProgress(course.id);
   const { modules } = useCourseModules(course.id);
   const t = getTranslation(locale);
-  
-  const courseLocale = getPreferredLocale(['no', 'en']); // Content fallback logic can remain or use UI locale if appropriate.
-  // Usually we want content locale to follow UI locale if possible, but fallback to what's available.
-  // getLocalizedValue handles the fallback logic internally given a requested locale.
-  
+
   const totalModules = modules.length;
   const completedCount = modules.filter((module) =>
     completedModules.includes(module.id),

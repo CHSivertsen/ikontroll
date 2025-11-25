@@ -1,35 +1,41 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCustomer } from '@/hooks/useCustomer';
 import { useCourses } from '@/hooks/useCourses';
 
 const CourseCard = ({
+  id,
   title,
   description,
   isAssigned,
 }: {
+  id: string;
   title: string;
   description: string;
   isAssigned: boolean;
 }) => (
-  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+  <Link 
+    href={`/customer-courses/${id}`}
+    className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md"
+  >
     <div className="flex items-center justify-between">
       <div>
         <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-        <p className="text-sm text-slate-500">{description}</p>
+        <p className="text-sm text-slate-500 line-clamp-2">{description}</p>
       </div>
       <span
-        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+        className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
           isAssigned ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
         }`}
       >
         {isAssigned ? 'Tilgang' : 'Ingen tilgang'}
       </span>
     </div>
-  </div>
+  </Link>
 );
 
 export default function CustomerCoursesPage() {
@@ -57,7 +63,7 @@ export default function CustomerCoursesPage() {
         <p className="text-sm text-slate-500">
           Kurs knyttet til{' '}
           <span className="font-semibold text-slate-900">
-            {membership?.customerName ?? activeCustomerId ?? ''}
+            {customer?.companyName ?? membership?.customerName ?? activeCustomerId ?? ''}
           </span>
         </p>
       </div>
@@ -66,6 +72,7 @@ export default function CustomerCoursesPage() {
         {courses.map((course) => (
           <CourseCard
             key={course.id}
+            id={course.id}
             title={
               typeof course.title === 'object'
                 ? course.title.no ?? course.title.en ?? 'Uten tittel'
@@ -82,9 +89,8 @@ export default function CustomerCoursesPage() {
       </div>
 
       <p className="text-xs text-slate-400">
-        Kontakt systemeier for å be om tilgang til flere kurs.
+        Klikk på et kurs for å administrere tildelinger og se fremdrift.
       </p>
     </section>
   );
 }
-

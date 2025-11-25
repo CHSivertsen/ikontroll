@@ -1,6 +1,6 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useMemo } from 'react';
 
@@ -91,7 +91,8 @@ export default function ConsumerCourseView({
     router.push(`${basePath}/${course.id}/modules/${nextModuleId}?lang=${locale}`);
   };
 
-  const startButtonLabel = completedCount > 0 ? t.courses.continueCourse : t.courses.startCourse;
+  const startButtonLabel =
+    completedCount > 0 ? t.courses.continueCourse : t.courses.startCourse;
 
   if (loading) {
     return (

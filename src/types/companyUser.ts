@@ -30,4 +30,5 @@ export interface CompanyUserPayload {
   phone: string;
   roles: CompanyUserRole[];
   status: CompanyUserStatus;
+  assignedCourseIds?: string[];
 }

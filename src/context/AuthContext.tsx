@@ -10,7 +10,7 @@ import {
 } from 'react';
 import type { User } from 'firebase/auth';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 import { auth, db } from '@/lib/firebase';
 import type { CustomerMembership } from '@/types/companyUser';
@@ -38,24 +38,20 @@ const CUSTOMER_STORAGE_KEY = 'ikontroll.customerId';
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<PortalUser | null>(null);
-  const [companyId, setCompanyIdState] = useState<string | null>(null);
-  const [customerMemberships, setCustomerMemberships] = useState<CustomerMembership[]>([]);
-  const [activeCustomerId, setActiveCustomerIdState] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
+  const [companyId, setCompanyIdState] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
-      return;
+      return null;
     }
-    const stored = localStorage.getItem(COMPANY_STORAGE_KEY);
-    if (stored) {
-      setCompanyIdState(stored);
+    return localStorage.getItem(COMPANY_STORAGE_KEY);
+  });
+  const [customerMemberships, setCustomerMemberships] = useState<CustomerMembership[]>([]);
+  const [activeCustomerId, setActiveCustomerIdState] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
     }
-    const storedCustomer = localStorage.getItem(CUSTOMER_STORAGE_KEY);
-    if (storedCustomer) {
-      setActiveCustomerIdState(storedCustomer);
-    }
-  }, []);
+    return localStorage.getItem(CUSTOMER_STORAGE_KEY);
+  });
+  const [loading, setLoading] = useState(true);
 
   const updateCompany = useCallback((id: string | null) => {
     setCompanyIdState(id);
@@ -89,7 +85,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (current) => {
+    let profileUnsubscribe: (() => void) | null = null;
+
+    const unsubscribe = onAuthStateChanged(auth, (current) => {
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+        profileUnsubscribe = null;
+      }
+
       setFirebaseUser(current);
       setLoading(true);
 
@@ -102,9 +105,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return;
       }
 
-      try {
-        const snapshot = await getDoc(doc(db, 'users', current.uid));
-        if (snapshot.exists()) {
+      const userDocRef = doc(db, 'users', current.uid);
+      profileUnsubscribe = onSnapshot(
+        userDocRef,
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            setProfile(null);
+            console.warn('User document missing for uid', current.uid);
+            setCustomerMemberships([]);
+            updateActiveCustomer(null);
+            setLoading(false);
+            return;
+          }
+
           const data = snapshot.data();
           const companyRaw = Array.isArray(data.companyIds) ? data.companyIds : [];
 
@@ -166,23 +179,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             updateCompany(null);
           }
 
-          const memberships =
-            portalUser.customerMemberships?.filter((membership) =>
-              membership.roles.includes('admin'),
-            ) ?? [];
-          setCustomerMemberships(memberships);
+          const allCustomerMemberships = portalUser.customerMemberships ?? [];
+          const adminMemberships = allCustomerMemberships.filter((membership) =>
+            membership.roles.includes('admin'),
+          );
+          setCustomerMemberships(adminMemberships);
 
-          if (memberships.length === 1) {
-            updateActiveCustomer(memberships[0].customerId);
-          } else if (!memberships.length) {
+          const selectionPool =
+            adminMemberships.length > 0 ? adminMemberships : allCustomerMemberships;
+
+          if (selectionPool.length === 1) {
+            updateActiveCustomer(selectionPool[0].customerId);
+          } else if (!selectionPool.length) {
             updateActiveCustomer(null);
           } else if (
-            memberships.every(
+            selectionPool.every(
               (membership) => membership.customerId !== activeCustomerId,
             )
           ) {
             const stored = localStorage.getItem(CUSTOMER_STORAGE_KEY);
-            const validStored = memberships.find(
+            const validStored = selectionPool.find(
               (membership) => membership.customerId === stored,
             );
             if (validStored) {
@@ -191,23 +207,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               updateActiveCustomer(null, false);
             }
           }
-        } else {
+
+          setLoading(false);
+        },
+        (error) => {
+          console.error('Failed to load user profile', error);
           setProfile(null);
-          console.warn('User document missing for uid', current.uid);
           setCustomerMemberships([]);
           updateActiveCustomer(null);
-        }
-      } catch (error) {
-        console.error('Failed to load user profile', error);
-        setProfile(null);
-        setCustomerMemberships([]);
-        updateActiveCustomer(null);
-      } finally {
-        setLoading(false);
-      }
+          setLoading(false);
+        },
+      );
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+      }
+      unsubscribe();
+    };
   }, [activeCustomerId, companyId, updateActiveCustomer, updateCompany]);
 
   const isSystemOwner =
