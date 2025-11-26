@@ -6,6 +6,13 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 
 const usersCollection = adminDb.collection('users');
+const SVEVE_USERNAME = process.env.SVEVE_USERNAME;
+const SVEVE_PASSWORD = process.env.SVEVE_PASSWORD;
+const SVEVE_SENDER = process.env.SVEVE_SENDER ?? 'Ikontroll';
+const PORTAL_LOGIN_URL =
+  process.env.PORTAL_LOGIN_URL ??
+  process.env.NEXT_PUBLIC_PORTAL_URL ??
+  'https://portal.ikontroll.no/login';
 
 type CompanyUserRole = 'admin' | 'user';
 
@@ -41,7 +48,7 @@ const normalizeMemberships = (value: unknown) => {
     return [] as {
       customerId: string;
       roles: CompanyUserRole[];
-      assignedCourseIds: string[] | undefined;
+      assignedCourseIds: string[];
     }[];
   }
   return value
@@ -67,7 +74,7 @@ const normalizeMemberships = (value: unknown) => {
           
           const validAssignedCourseIds = Array.isArray(assignedCourseIds)
             ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
-            : undefined;
+            : [];
 
           return { customerId, roles: validRoles, assignedCourseIds: validAssignedCourseIds };
         }
@@ -80,13 +87,18 @@ const normalizeMemberships = (value: unknown) => {
       ): membership is {
         customerId: string;
         roles: CompanyUserRole[];
-        assignedCourseIds: string[] | undefined;
+        assignedCourseIds: string[];
       } => membership !== null,
     );
 };
 
 const upsertMembership = (
-  memberships: { customerId: string; customerName?: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] }[],
+  memberships: {
+    customerId: string;
+    customerName?: string;
+    roles: CompanyUserRole[];
+    assignedCourseIds?: string[];
+  }[],
   customerId: string,
   customerName: string | undefined,
   roles: CompanyUserRole[],
@@ -98,11 +110,11 @@ const upsertMembership = (
     (membership) => membership.customerId !== customerId,
   );
   
-  filteredMemberships.push({ 
-    customerId, 
-    customerName, 
+  filteredMemberships.push({
+    customerId,
+    customerName,
     roles: filteredRoles,
-    assignedCourseIds: assignedCourseIds 
+    assignedCourseIds: Array.isArray(assignedCourseIds) ? assignedCourseIds : [],
   });
   
   return filteredMemberships;
@@ -125,12 +137,17 @@ const upsertUserDocument = async ({
   const snapshot = await userDocRef.get();
   const existingData = snapshot.exists ? snapshot.data() : null;
   const memberships = normalizeMemberships(existingData?.customerMemberships);
+  const previousMembership = memberships.find((entry) => entry.customerId === customerId);
+  const previousAssignedCourses = previousMembership?.assignedCourseIds ?? [];
+  const normalizedAssignedCourses = Array.isArray(user.assignedCourseIds)
+    ? user.assignedCourseIds.filter((id): id is string => typeof id === 'string')
+    : [];
   const nextMemberships = upsertMembership(
-    memberships, 
-    customerId, 
-    customerName, 
+    memberships,
+    customerId,
+    customerName,
     user.roles,
-    user.assignedCourseIds // Pass assigned courses
+    normalizedAssignedCourses,
   );
 
   await userDocRef.set(
@@ -149,6 +166,12 @@ const upsertUserDocument = async ({
     },
     { merge: true },
   );
+
+  const addedCourseIds = normalizedAssignedCourses.filter(
+    (courseId) => !previousAssignedCourses.includes(courseId),
+  );
+
+  return { addedCourseIds };
 };
 
 export async function POST(request: NextRequest) {
@@ -200,13 +223,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    await upsertUserDocument({
+    const { addedCourseIds } = await upsertUserDocument({
       authUid: authUser.uid,
       user,
       companyId,
       customerId,
       customerName,
     });
+
+    await notifyCourseAssignments(user.phone, addedCourseIds);
 
     return NextResponse.json({
       id: authUser.uid,
@@ -244,7 +269,7 @@ export async function PATCH(request: NextRequest) {
   const authTarget = authUid ?? userId;
 
   try {
-    await upsertUserDocument({
+    const { addedCourseIds } = await upsertUserDocument({
       authUid: userId,
       user,
       companyId,
@@ -257,6 +282,8 @@ export async function PATCH(request: NextRequest) {
       displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
       disabled: user.status === 'inactive',
     });
+
+    await notifyCourseAssignments(user.phone, addedCourseIds);
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
@@ -332,3 +359,97 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+const SVEVE_ENDPOINT = 'https://sveve.no/SMS/SendMessage';
+const SVEVE_TEST_MODE = process.env.SVEVE_TEST === 'true';
+
+const formatPhoneNumber = (raw: string) => raw.replace(/[^\d+]/g, '').replace(/^00/, '+');
+
+const resolveCourseTitle = (data: Record<string, unknown> | undefined) => {
+  if (!data) return 'Nytt kurs';
+  const title = data.title as unknown;
+  if (typeof title === 'string' && title.trim()) {
+    return title;
+  }
+  if (typeof title === 'object' && title !== null) {
+    const map = title as Record<string, unknown>;
+    return (
+      (typeof map.no === 'string' && map.no.trim()) ||
+      (typeof map.en === 'string' && map.en.trim()) ||
+      'Nytt kurs'
+    );
+  }
+  return 'Nytt kurs';
+};
+
+const fetchCourseTitles = async (courseIds: string[]) => {
+  const entries = await Promise.all(
+    courseIds.map(async (courseId) => {
+      try {
+        const snapshot = await adminDb.collection('courses').doc(courseId).get();
+        if (!snapshot.exists) {
+          return [courseId, 'Nytt kurs'] as const;
+        }
+        return [courseId, resolveCourseTitle(snapshot.data() ?? undefined)] as const;
+      } catch (error) {
+        console.error('Failed to load course title', courseId, error);
+        return [courseId, 'Nytt kurs'] as const;
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
+};
+
+const sendSveveSms = async (to: string, text: string) => {
+  if (!SVEVE_USERNAME || !SVEVE_PASSWORD) {
+    console.warn('Sveve credentials missing, skipping SMS.');
+    return;
+  }
+  const clean = formatPhoneNumber(to);
+  if (!clean) {
+    console.warn('Invalid recipient phone number, skipping SMS.');
+    return;
+  }
+  const query = new URLSearchParams({
+    user: SVEVE_USERNAME,
+    passwd: SVEVE_PASSWORD,
+    to: clean,
+    msg: text,
+    from: SVEVE_SENDER,
+    f: 'json',
+    test: SVEVE_TEST_MODE ? 'true' : 'false',
+  });
+  try {
+    const response = await fetch(`${SVEVE_ENDPOINT}?${query.toString()}`, {
+      method: 'GET',
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Sveve SMS request failed', response.status, errorText);
+      return;
+    }
+    const json = (await response.json().catch(() => null)) as
+      | { response?: { msgOkCount?: number; errors?: unknown } }
+      | null;
+    if (json?.response?.errors) {
+      console.error('Sveve SMS response reported errors', json.response.errors);
+    }
+  } catch (error) {
+    console.error('Sveve SMS request error', error);
+  }
+};
+
+const notifyCourseAssignments = async (phone: string | undefined, courseIds: string[]) => {
+  if (!phone || !courseIds.length) {
+    return;
+  }
+  const titles = await fetchCourseTitles(courseIds);
+  await Promise.all(
+    courseIds.map((courseId) =>
+      sendSveveSms(
+        phone,
+        `Du har fått tilgang til kurset ${titles[courseId] ?? 'Nytt kurs'}. Logg inn her: ${PORTAL_LOGIN_URL}`,
+      ),
+    ),
+  );
+};
