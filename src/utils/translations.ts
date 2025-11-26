@@ -11,6 +11,7 @@ export const translations = {
       profile: 'Profil',
       myProfile: 'Min profil',
       dashboard: 'Dashboard',
+      myCourses: 'Mine kurs',
     },
     auth: {
       loginTitle: 'Logg inn',
@@ -92,6 +93,7 @@ export const translations = {
       profile: 'Profile',
       myProfile: 'My profile',
       dashboard: 'Dashboard',
+      myCourses: 'My courses',
     },
     auth: {
       loginTitle: 'Log in',

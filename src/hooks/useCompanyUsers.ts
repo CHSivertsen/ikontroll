@@ -7,6 +7,7 @@ import { db } from '@/lib/firebase';
 import type {
   CompanyUser,
   CompanyUserPayload,
+  CustomerMembership,
 } from '@/types/companyUser';
 
 interface UseCompanyUsersState {
@@ -22,6 +23,7 @@ interface UseCompanyUsersState {
     id: string,
     payload: CompanyUserPayload,
     authUid?: string,
+    customerName?: string,
   ) => Promise<void>;
   deleteUser: (id: string, authUid?: string) => Promise<void>;
 }
@@ -62,8 +64,8 @@ export const useCompanyUsers = (
           const membershipsRaw = Array.isArray(data.customerMemberships)
             ? data.customerMemberships
             : [];
-          const customerMemberships = membershipsRaw
-            .map((membership: unknown) => {
+          const customerMemberships = membershipsRaw.reduce<CustomerMembership[]>(
+            (acc, membership) => {
               if (
                 typeof membership === 'object' &&
                 membership !== null &&
@@ -91,7 +93,7 @@ export const useCompanyUsers = (
                     ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
                     : undefined;
 
-                  return {
+                  acc.push({
                     customerId: membershipCustomerId,
                     customerName:
                       typeof (membership as { customerName?: unknown }).customerName ===
@@ -100,17 +102,13 @@ export const useCompanyUsers = (
                         : undefined,
                     roles: roleList,
                     assignedCourseIds: courseIds,
-                  };
+                  });
                 }
               }
-              return null;
-            })
-            .filter(
-              (
-                membership,
-              ): membership is { customerId: string; roles: Array<'admin' | 'user'> } =>
-                membership !== null,
-            );
+              return acc;
+            },
+            [],
+          );
 
           return {
             id: docSnap.id,

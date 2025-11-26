@@ -113,6 +113,10 @@ export default function CustomerManager() {
     resolver: zodResolver(customerSchema),
     defaultValues,
   });
+  const {
+    ref: companyNameFieldRef,
+    ...companyNameFieldProps
+  } = form.register('companyName');
   const companyNameValue = form.watch('companyName');
 
   const createContactAdminUser = useCallback(
@@ -535,8 +539,13 @@ export default function CustomerManager() {
                     hint="Søk henter data fra Brønnøysundregisteret"
                   >
                     <input
-                      ref={companyNameInputRef}
-                      {...form.register('companyName')}
+                      {...companyNameFieldProps}
+                      ref={(element) => {
+                        companyNameInputRef.current = element;
+                        if (typeof companyNameFieldRef === 'function') {
+                          companyNameFieldRef(element);
+                        }
+                      }}
                       onFocus={() => {
                         if (suggestions.length) setShowSuggestions(true);
                       }}

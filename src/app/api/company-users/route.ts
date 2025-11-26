@@ -38,7 +38,11 @@ const validateBasePayload = (body: Partial<CompanyUserPayload> | null) => {
 
 const normalizeMemberships = (value: unknown) => {
   if (!Array.isArray(value)) {
-    return [] as { customerId: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] }[];
+    return [] as {
+      customerId: string;
+      roles: CompanyUserRole[];
+      assignedCourseIds: string[] | undefined;
+    }[];
   }
   return value
     .map((entry) => {
@@ -73,8 +77,11 @@ const normalizeMemberships = (value: unknown) => {
     .filter(
       (
         membership,
-      ): membership is { customerId: string; roles: CompanyUserRole[]; assignedCourseIds?: string[] } =>
-        membership !== null,
+      ): membership is {
+        customerId: string;
+        roles: CompanyUserRole[];
+        assignedCourseIds: string[] | undefined;
+      } => membership !== null,
     );
 };
 
@@ -157,7 +164,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, customerName, user, password } = body;
+  if (!body) {
+    return NextResponse.json({ error: 'Mangler payload' }, { status: 400 });
+  }
+
+  const { companyId, customerId, customerName, password } = body;
+  const user = body.user!;
 
   try {
     let authUser = null;
@@ -222,7 +234,13 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const { companyId, customerId, customerName, userId, user, authUid } = body;
+  if (!body) {
+    return NextResponse.json({ error: 'Mangler payload' }, { status: 400 });
+  }
+
+  const { companyId, customerId, customerName, authUid } = body;
+  const userId = body.userId!;
+  const user = body.user!;
   const authTarget = authUid ?? userId;
 
   try {
@@ -263,7 +281,12 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const { userId, customerId, authUid } = body;
+  if (!body) {
+    return NextResponse.json({ error: 'Mangler payload' }, { status: 400 });
+  }
+
+  const { customerId, authUid } = body;
+  const userId = body.userId!;
   const authTarget = authUid ?? userId;
 
   try {
