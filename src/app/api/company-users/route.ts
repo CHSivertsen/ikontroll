@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
+import { randomBytes } from 'crypto';
 
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 
@@ -13,6 +14,11 @@ const PORTAL_LOGIN_URL =
   process.env.PORTAL_LOGIN_URL ??
   process.env.NEXT_PUBLIC_PORTAL_URL ??
   'https://portal.ikontroll.no/login';
+const PORTAL_MAGIC_LOGIN_URL =
+  process.env.PORTAL_MAGIC_LOGIN_URL ??
+  PORTAL_LOGIN_URL.replace(/\/login$/, '/magic-login');
+const MAGIC_LINK_TTL_MS = Number(process.env.MAGIC_LINK_TTL_MS ?? 1000 * 60 * 30); // 30 min default
+const MAGIC_LINK_COLLECTION = adminDb.collection('magicLinks');
 
 type CompanyUserRole = 'admin' | 'user';
 
@@ -231,7 +237,7 @@ export async function POST(request: NextRequest) {
       customerName,
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds);
+    await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid);
 
     return NextResponse.json({
       id: authUser.uid,
@@ -283,7 +289,7 @@ export async function PATCH(request: NextRequest) {
       disabled: user.status === 'inactive',
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds);
+    await notifyCourseAssignments(user.phone, addedCourseIds, authTarget);
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
@@ -400,6 +406,79 @@ const fetchCourseTitles = async (courseIds: string[]) => {
   return Object.fromEntries(entries);
 };
 
+const generateMagicCode = () =>
+  randomBytes(6)
+    .toString('base64')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(0, 10)
+    .toLowerCase();
+
+const createMagicLoginCode = async ({
+  authUid,
+  courseId,
+}: {
+  authUid: string;
+  courseId?: string;
+}) => {
+  const redirectPath = courseId ? `/my-courses/${courseId}` : '/my-courses';
+  let attempts = 0;
+  while (attempts < 5) {
+    const code = generateMagicCode();
+    const docRef = MAGIC_LINK_COLLECTION.doc(code);
+    const existing = await docRef.get();
+    if (existing.exists) {
+      attempts += 1;
+      continue;
+    }
+
+    await docRef.set({
+      authUid,
+      courseId: courseId ?? null,
+      redirect: redirectPath,
+      expiresAt: Date.now() + MAGIC_LINK_TTL_MS,
+      createdAt: FieldValue.serverTimestamp(),
+      consumed: false,
+    });
+
+    return `${PORTAL_MAGIC_LOGIN_URL}?code=${code}`;
+  }
+  throw new Error('Failed to generate unique magic login code');
+};
+
+const buildMagicLoginUrl = async ({
+  authUid,
+  courseId,
+}: {
+  authUid: string | undefined;
+  courseId?: string;
+}) => {
+  if (!authUid) {
+    return PORTAL_LOGIN_URL;
+  }
+
+  try {
+    return await createMagicLoginCode({ authUid, courseId });
+  } catch (error) {
+    console.error('Failed to create magic code, falling back to token', error);
+    try {
+      const customToken = await adminAuth.createCustomToken(authUid, {
+        loginSource: 'sms',
+        issuedAt: Date.now(),
+        ...(courseId ? { courseId } : {}),
+      });
+      const targetUrl = new URL(PORTAL_MAGIC_LOGIN_URL);
+      targetUrl.searchParams.set('token', customToken);
+      if (courseId) {
+        targetUrl.searchParams.set('redirect', `/my-courses/${courseId}`);
+      }
+      return targetUrl.toString();
+    } catch (fallbackError) {
+      console.error('Failed to create fallback magic token', fallbackError);
+      return PORTAL_LOGIN_URL;
+    }
+  }
+};
+
 const sendSveveSms = async (to: string, text: string) => {
   if (!SVEVE_USERNAME || !SVEVE_PASSWORD) {
     console.warn('Sveve credentials missing, skipping SMS.');
@@ -439,17 +518,23 @@ const sendSveveSms = async (to: string, text: string) => {
   }
 };
 
-const notifyCourseAssignments = async (phone: string | undefined, courseIds: string[]) => {
+const notifyCourseAssignments = async (
+  phone: string | undefined,
+  courseIds: string[],
+  authUid: string | undefined,
+) => {
   if (!phone || !courseIds.length) {
     return;
   }
   const titles = await fetchCourseTitles(courseIds);
   await Promise.all(
-    courseIds.map((courseId) =>
-      sendSveveSms(
+    courseIds.map(async (courseId) => {
+      const courseTitle = titles[courseId] ?? 'Nytt kurs';
+      const magicLink = await buildMagicLoginUrl({ authUid, courseId });
+      return sendSveveSms(
         phone,
-        `Du har fått tilgang til kurset ${titles[courseId] ?? 'Nytt kurs'}. Logg inn her: ${PORTAL_LOGIN_URL}`,
-      ),
-    ),
+        `Du har fått tilgang til kurset ${courseTitle}. Logg inn her: ${magicLink}`,
+      );
+    }),
   );
 };

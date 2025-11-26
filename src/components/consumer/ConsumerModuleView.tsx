@@ -307,23 +307,36 @@ export default function ConsumerModuleView({
                       key={url}
                       type="button"
                       onClick={() => setMediaPreview({ url, type })}
-                      className="relative h-48 min-w-[260px] flex-shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 transition hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-slate-300"
+                      className="relative h-[165px] w-[165px] flex-shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 transition hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-slate-300"
                     >
                       {isVideo ? (
-                        isYouTubeUrl(url) ? (
-                          <iframe
-                            src={url}
-                            title="Modulvideo"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            className="h-full w-full"
-                          />
-                        ) : (
-                          <video controls className="h-full w-full object-cover bg-black">
-                            <source src={url} />
-                            {t.modules.videoNotSupported}
-                          </video>
-                        )
+                        <>
+                          {isYouTubeUrl(url) ? (
+                            <iframe
+                              src={`${url}${url.includes('?') ? '&' : '?'}controls=0&modestbranding=1&playsinline=1&rel=0`}
+                              title="Modulvideo"
+                              allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                              className="h-full w-full pointer-events-none"
+                            />
+                          ) : (
+                            <video
+                              className="h-full w-full bg-black object-cover"
+                              muted
+                              playsInline
+                              preload="metadata"
+                              controls={false}
+                            >
+                              <source src={url} />
+                              {t.modules.videoNotSupported}
+                            </video>
+                          )}
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20">
+                            <span className="rounded-full bg-white/85 px-3 py-1 text-xs font-semibold text-slate-900 shadow">
+                              ▶
+                            </span>
+                          </div>
+                        </>
                       ) : (
                         <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
                       )}
