@@ -8,6 +8,15 @@
     ],
     "frameworksBackend": {
       "region": "europe-west1"
-    }
+    },
+    "rewrites": [
+      {
+        "source": "**",
+        "function": {
+          "functionId": "ssrinternkontroll8e12a",
+          "region": "europe-west1"
+        }
+      }
+    ]
   }
 }

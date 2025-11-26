@@ -76,6 +76,14 @@ export const useCourseProgress = (courseId: string | null): CourseProgressState 
         ? Array.from(new Set([...current, moduleId]))
         : current.filter((id) => id !== moduleId);
 
+      // Avoid redundant writes if nothing actually changed
+      const changed =
+        current.length !== nextModules.length ||
+        current.some((id, index) => id !== nextModules[index]);
+      if (!changed) {
+        return;
+      }
+
       setCompletedModules(nextModules);
       completedModulesRef.current = nextModules;
 

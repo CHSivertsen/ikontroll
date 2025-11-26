@@ -219,26 +219,6 @@ export default function ConsumerModuleView({
     router.replace(courseOverviewHref);
   }, [acknowledgeCompletion, router, courseOverviewHref]);
 
-  const autoRedirectedRef = useRef(false);
-
-  useEffect(() => {
-    if (!showCourseComplete) {
-      autoRedirectedRef.current = false;
-      return;
-    }
-
-    if (autoRedirectedRef.current) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      autoRedirectedRef.current = true;
-      handleReturnToCourse();
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [showCourseComplete, handleReturnToCourse]);
-
   // Find next module
   const nextModuleId = useMemo(() => {
     if (!modules) return null;
@@ -407,7 +387,7 @@ export default function ConsumerModuleView({
                         key={question.id}
                         className="rounded-2xl border border-red-100 bg-red-50 px-5 py-4"
                       >
-                        <p className="text-sm font-semibold text-red-700">
+                        <p className="text-base font-semibold text-red-700">
                           {questionText || t.modules.question}
                         </p>
                         <p className="mt-2 text-sm text-red-600">
@@ -442,12 +422,13 @@ export default function ConsumerModuleView({
                       {t.modules.retry}
                     </button>
                   )}
-                  <Link
-                    href={courseOverviewHref}
+                  <button
+                    type="button"
+                    onClick={() => router.replace(courseOverviewHref)}
                     className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
                     {t.modules.backToOverview}
-                  </Link>
+                  </button>
                 </div>
                 {incorrectQuestions.length === 0 && nextModuleId && !showCourseComplete && (
                   <button
@@ -462,7 +443,7 @@ export default function ConsumerModuleView({
             </div>
           ) : currentQuestion ? (
             <div className="space-y-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-700">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold text-slate-700">
                 {getLocalizedValue(currentQuestion.contentText, locale) || t.modules.question}
               </div>
               <div className="space-y-3">

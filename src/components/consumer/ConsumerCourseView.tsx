@@ -160,6 +160,15 @@ export default function ConsumerCourseView({
             </div>
             <p className="mt-2 text-xs text-slate-500">{progressSummary}</p>
           </div>
+          <div className="flex justify-center">
+            <button
+              onClick={handleStartCourse}
+              disabled={!nextModuleId}
+              className="mt-4 w-full max-w-xl rounded-2xl bg-slate-900 px-8 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {startButtonLabel}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -215,15 +224,6 @@ export default function ConsumerCourseView({
               </button>
             );
           })}
-        </div>
-        <div className="mt-8 flex justify-center">
-          <button
-            onClick={handleStartCourse}
-            disabled={!nextModuleId}
-            className="w-full max-w-xl rounded-2xl bg-slate-900 px-8 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {startButtonLabel}
-          </button>
         </div>
       </section>
     </div>
