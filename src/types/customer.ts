@@ -8,6 +8,7 @@ export interface Customer {
   place: string;
   vatNumber: string;
   status: CustomerStatus;
+  allowSubunits: boolean;
   contactPerson: string;
   contactPhone: string;
   contactEmail: string;

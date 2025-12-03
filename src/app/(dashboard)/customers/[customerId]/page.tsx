@@ -82,6 +82,11 @@ export default function CustomerDetailsPage() {
               <Info label="Status">
                 {customer.status === 'active' ? 'Aktiv' : 'Inaktiv'}
               </Info>
+              <Info label="Underenheter">
+                {customer.allowSubunits
+                  ? 'Kan legge til egne underenheter'
+                  : 'Kan ikke legge til underenheter'}
+              </Info>
               <Info label="Kontakt">
                 <div className="space-y-1 text-sm text-slate-600">
                   <p className="font-medium">{customer.contactPerson}</p>

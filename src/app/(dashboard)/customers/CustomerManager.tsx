@@ -55,6 +55,7 @@ const customerSchema = z.object({
   place: z.string().min(2, 'Poststed må fylles ut'),
   vatNumber: z.string().min(1, 'Org.nr/VAT må fylles ut'),
   status: z.enum(['active', 'inactive']),
+  allowSubunits: z.boolean().default(false),
   contactPerson: z.string().min(2, 'Kontaktperson må fylles ut'),
   contactPhone: z.string().min(4, 'Telefon må fylles ut'),
   contactEmail: z.string().email('Ugyldig e-postadresse'),
@@ -75,6 +76,7 @@ const defaultValues: CustomerFormValues = {
   place: '',
   vatNumber: '',
   status: 'active',
+  allowSubunits: false,
   contactPerson: '',
   contactPhone: '',
   contactEmail: '',
@@ -112,6 +114,7 @@ export default function CustomerManager() {
   const form = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
     defaultValues,
+    shouldUnregister: true,
   });
   const {
     ref: companyNameFieldRef,
@@ -277,6 +280,7 @@ export default function CustomerManager() {
         place: customer.place,
         vatNumber: customer.vatNumber,
         status: customer.status,
+        allowSubunits: customer.allowSubunits ?? false,
         contactPerson: customer.contactPerson,
         contactPhone: customer.contactPhone,
         contactEmail: customer.contactEmail,
@@ -395,11 +399,18 @@ export default function CustomerManager() {
           </div>
         </td>
         <td className="py-3">
-          <span
-            className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusBadges[customer.status]}`}
-          >
-            {customer.status === 'active' ? 'Aktiv' : 'Inaktiv'}
-          </span>
+          <div className="flex flex-col gap-1">
+            <span
+              className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-medium ${statusBadges[customer.status]}`}
+            >
+              {customer.status === 'active' ? 'Aktiv' : 'Inaktiv'}
+            </span>
+            {customer.allowSubunits && (
+              <span className="text-xs font-semibold text-emerald-600">
+                Underenheter
+              </span>
+            )}
+          </div>
         </td>
         <td className="py-3 text-sm text-slate-600">{customer.vatNumber}</td>
         <td className="py-3 text-right">
@@ -651,6 +662,23 @@ export default function CustomerManager() {
                     <option value="inactive">Inaktiv</option>
                   </select>
                 </Field>
+                <div className="md:col-span-2">
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      {...form.register('allowSubunits')}
+                      className="mt-1 h-5 w-5 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                    />
+                    <div className="text-sm">
+                      <p className="font-semibold text-slate-900">
+                        Kunde kan opprette underenheter
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Når aktivert kan kundens administratorer selv legge til egne foretak.
+                      </p>
+                    </div>
+                  </label>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">

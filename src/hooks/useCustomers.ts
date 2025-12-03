@@ -65,6 +65,8 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
             place: data.place ?? '',
             vatNumber: data.vatNumber ?? '',
             status: data.status ?? 'active',
+            allowSubunits:
+              typeof data.allowSubunits === 'boolean' ? data.allowSubunits : false,
             contactPerson: data.contactPerson ?? '',
             contactPhone: data.contactPhone ?? '',
             contactEmail: data.contactEmail ?? '',
@@ -102,6 +104,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
 
       const docRef = await addDoc(customersCollection, {
         ...payload,
+        allowSubunits: payload.allowSubunits ?? false,
         courseIds: [],
         createdByCompanyId: companyId,
         createdAt: serverTimestamp(),
@@ -121,6 +124,7 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
       const customerRef = doc(db, 'customers', id);
       await updateDoc(customerRef, {
         ...payload,
+        allowSubunits: payload.allowSubunits ?? false,
         updatedAt: serverTimestamp(),
       });
     },

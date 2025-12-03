@@ -64,6 +64,8 @@ export const useCustomer = (
               place: data.place ?? '',
               vatNumber: data.vatNumber ?? '',
               status: data.status ?? 'active',
+              allowSubunits:
+                typeof data.allowSubunits === 'boolean' ? data.allowSubunits : false,
               contactPerson: data.contactPerson ?? '',
               contactPhone: data.contactPhone ?? '',
               contactEmail: data.contactEmail ?? '',
