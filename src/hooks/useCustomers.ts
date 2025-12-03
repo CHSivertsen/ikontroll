@@ -67,6 +67,12 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
             status: data.status ?? 'active',
             allowSubunits:
               typeof data.allowSubunits === 'boolean' ? data.allowSubunits : false,
+            parentCustomerId:
+              typeof data.parentCustomerId === 'string' ? data.parentCustomerId : null,
+            parentCustomerName:
+              typeof data.parentCustomerName === 'string'
+                ? data.parentCustomerName
+                : null,
             contactPerson: data.contactPerson ?? '',
             contactPhone: data.contactPhone ?? '',
             contactEmail: data.contactEmail ?? '',
@@ -105,6 +111,8 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
       const docRef = await addDoc(customersCollection, {
         ...payload,
         allowSubunits: payload.allowSubunits ?? false,
+        parentCustomerId: payload.parentCustomerId ?? null,
+        parentCustomerName: payload.parentCustomerName ?? null,
         courseIds: [],
         createdByCompanyId: companyId,
         createdAt: serverTimestamp(),
@@ -125,6 +133,8 @@ export const useCustomers = (companyId: string | null): UseCustomersState => {
       await updateDoc(customerRef, {
         ...payload,
         allowSubunits: payload.allowSubunits ?? false,
+        parentCustomerId: payload.parentCustomerId ?? null,
+        parentCustomerName: payload.parentCustomerName ?? null,
         updatedAt: serverTimestamp(),
       });
     },

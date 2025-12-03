@@ -9,6 +9,8 @@ export interface Customer {
   vatNumber: string;
   status: CustomerStatus;
   allowSubunits: boolean;
+  parentCustomerId?: string | null;
+  parentCustomerName?: string | null;
   contactPerson: string;
   contactPhone: string;
   contactEmail: string;
@@ -20,6 +22,10 @@ export interface Customer {
 
 export type CustomerPayload = Omit<
   Customer,
-  'id' | 'createdAt' | 'updatedAt' | 'createdByCompanyId' | 'courseIds'
+  | 'id'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'createdByCompanyId'
+  | 'courseIds'
 >;
 
