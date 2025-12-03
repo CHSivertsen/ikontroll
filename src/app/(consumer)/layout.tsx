@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 
 import ConsumerNavbar from '@/components/consumer/ConsumerNavbar';
 import PortalModePrompt from '@/components/PortalModePrompt';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
 
 export default function ConsumerLayout({
   children,
@@ -19,14 +19,44 @@ export default function ConsumerLayout({
     needsRoleChoice,
     isCustomerAdmin,
     isSystemOwner,
+    profile,
   } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !firebaseUser) {
       router.push('/login');
     }
   }, [loading, firebaseUser, router]);
+
+  const requiresProfileCompletion =
+    portalMode === 'user' &&
+    Boolean(firebaseUser) &&
+    (!profile?.firstName?.trim() || !profile?.lastName?.trim());
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+    const bypassKey =
+      typeof window !== 'undefined' && firebaseUser
+        ? `profileCompletionBypass_${firebaseUser.uid}`
+        : null;
+    const bypass = bypassKey
+      ? window.sessionStorage.getItem(bypassKey) === 'true'
+      : false;
+    if (requiresProfileCompletion && !bypass && pathname !== '/complete-profile') {
+      router.replace('/complete-profile');
+      return;
+    }
+    if (!requiresProfileCompletion && pathname === '/complete-profile' && portalMode === 'user') {
+      if (bypassKey) {
+        window.sessionStorage.removeItem(bypassKey);
+      }
+      router.replace('/my-courses');
+    }
+  }, [firebaseUser, loading, pathname, portalMode, requiresProfileCompletion, router]);
 
   useEffect(() => {
     const hasAdminAccess = isSystemOwner || isCustomerAdmin;

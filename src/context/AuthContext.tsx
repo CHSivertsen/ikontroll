@@ -315,6 +315,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     portalModeHydrated,
   ]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const firstReady = Boolean(profile?.firstName?.trim());
+    const lastReady = Boolean(profile?.lastName?.trim());
+    if (firstReady && lastReady) {
+      window.sessionStorage.removeItem('profileCompletionBypass');
+      const bypassKey = firebaseUser?.uid
+        ? `profileCompletionBypass_${firebaseUser.uid}`
+        : null;
+      if (bypassKey) {
+        window.sessionStorage.removeItem(bypassKey);
+      }
+    }
+  }, [firebaseUser?.uid, profile?.firstName, profile?.lastName]);
+
   let portalMode: PortalMode =
     portalModeState ?? (hasAdminAccess ? 'admin' : 'user');
 
