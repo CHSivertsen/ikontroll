@@ -47,9 +47,12 @@ interface CompanyUserPayload {
   password?: string;
 }
 
-const validateBasePayload = (body: Partial<CompanyUserPayload> | null) => {
+const validateBasePayload = (
+  body: Partial<CompanyUserPayload> | null,
+  requireCompanyId: boolean = true,
+) => {
   const errors: string[] = [];
-  if (!body?.companyId) errors.push('companyId');
+  if (requireCompanyId && !body?.companyId) errors.push('companyId');
   if (!body?.customerId) errors.push('customerId');
   return errors;
 };
@@ -113,21 +116,29 @@ const upsertMembership = (
   customerId: string,
   customerName: string | undefined,
   roles: CompanyUserRole[],
-  assignedCourseIds?: string[]
+  assignedCourseIds?: string[],
 ) => {
   const filteredRoles = Array.from(new Set(roles));
   // Find existing membership to preserve other fields if needed, though we replace completely now
   const filteredMemberships = memberships.filter(
     (membership) => membership.customerId !== customerId,
   );
-  
-  filteredMemberships.push({
+
+  const membershipEntry: {
+    customerId: string;
+    customerName?: string;
+    roles: CompanyUserRole[];
+    assignedCourseIds: string[];
+  } = {
     customerId,
-    customerName,
     roles: filteredRoles,
     assignedCourseIds: Array.isArray(assignedCourseIds) ? assignedCourseIds : [],
-  });
-  
+  };
+  if (typeof customerName === 'string' && customerName.trim()) {
+    membershipEntry.customerName = customerName;
+  }
+  filteredMemberships.push(membershipEntry);
+
   return filteredMemberships;
 };
 
@@ -161,22 +172,31 @@ const upsertUserDocument = async ({
     normalizedAssignedCourses,
   );
 
-  await userDocRef.set(
-    {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      phone: user.phone,
-      status: user.status,
-      authUid,
-      companyIds: FieldValue.arrayUnion(companyId),
-      customerIdRefs: FieldValue.arrayUnion(customerId),
-      customerMemberships: nextMemberships,
-      createdAt: existingData?.createdAt ?? FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
+  const sanitizedMemberships = nextMemberships.map(
+    ({ customerName: memName, ...rest }) =>
+      typeof memName === 'string' && memName.trim()
+        ? { ...rest, customerName: memName }
+        : rest,
   );
+
+  const updatePayload: Record<string, unknown> = {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    email: user.email,
+    phone: user.phone,
+    status: user.status,
+    authUid,
+    customerIdRefs: FieldValue.arrayUnion(customerId),
+    customerMemberships: sanitizedMemberships,
+    createdAt: existingData?.createdAt ?? FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (companyId) {
+    updatePayload.companyIds = FieldValue.arrayUnion(companyId);
+  }
+
+  await userDocRef.set(updatePayload, { merge: true });
 
   const addedCourseIds = normalizedAssignedCourses.filter(
     (courseId) => !previousAssignedCourses.includes(courseId),
@@ -291,7 +311,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
   console.log('PATCH /api/company-users payload', body);
-  const missing = validateBasePayload(body);
+  const missing = validateBasePayload(body, false);
   if (!body?.userId) missing.push('userId');
   if (!body?.user) missing.push('user');
 

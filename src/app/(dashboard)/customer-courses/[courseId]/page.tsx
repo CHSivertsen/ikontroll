@@ -220,7 +220,7 @@ const ensureUserRoleForAssignment = (
           <div className="flex items-center gap-2">
             <input 
               type="text" 
-              placeholder="Søk etter bruker..." 
+              placeholder="Søk etter deltager..." 
               className="rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-slate-400 focus:outline-none"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -259,7 +259,7 @@ const ensureUserRoleForAssignment = (
                     onChange={handleSelectAll}
                   />
                 </th>
-                <th className="px-4 py-3">Bruker</th>
+                <th className="px-4 py-3">Deltager</th>
                 <th className="px-4 py-3">Tilgang</th>
                 <th className="px-4 py-3">Fremdrift</th>
                 <th className="px-4 py-3 text-right">Handling</th>

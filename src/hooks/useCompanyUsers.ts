@@ -206,12 +206,12 @@ export const useCompanyUsers = (
       authUid?: string,
       customerName?: string,
     ) => {
-      if (!ownerCompanyId || !customerId) {
-        throw new Error('Company is not selected');
+      if (!customerId) {
+        throw new Error('Customer is not selected');
       }
 
       await callApi('PATCH', {
-        companyId: ownerCompanyId,
+        companyId: ownerCompanyId ?? undefined,
         customerId,
         userId: id,
         authUid: authUid ?? id,
