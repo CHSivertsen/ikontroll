@@ -26,6 +26,17 @@ export default function LoginPage() {
   const t = getTranslation(locale);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const queryEmail = params.get('email');
+    if (queryEmail) {
+      setEmail(queryEmail);
+    }
+  }, []);
+
+  useEffect(() => {
     if (loading || !firebaseUser) {
       return;
     }

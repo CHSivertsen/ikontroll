@@ -14,11 +14,7 @@ interface UseCompanyUsersState {
   users: CompanyUser[];
   loading: boolean;
   error: string | null;
-  createUser: (
-    payload: CompanyUserPayload,
-    password: string,
-    customerName?: string,
-  ) => Promise<void>;
+  createUser: (payload: CompanyUserPayload, customerName?: string) => Promise<void>;
   updateUser: (
     id: string,
     payload: CompanyUserPayload,
@@ -183,7 +179,7 @@ export const useCompanyUsers = (
   );
 
   const createUser = useCallback(
-    async (payload: CompanyUserPayload, password: string, customerName?: string) => {
+    async (payload: CompanyUserPayload, customerName?: string) => {
       if (!ownerCompanyId || !customerId) {
         throw new Error('Company is not selected');
       }
@@ -192,7 +188,6 @@ export const useCompanyUsers = (
         companyId: ownerCompanyId,
         customerId,
         user: payload,
-        password,
         customerName,
       });
     },

@@ -92,6 +92,27 @@ const statusBadges: Record<string, string> = {
   inactive: 'bg-slate-100 text-slate-600',
 };
 
+const ensureNorwegianPhone = (input?: string) => {
+  const trimmed = input?.trim() ?? '';
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.startsWith('+')) {
+    return trimmed;
+  }
+  const digits = trimmed.replace(/\s+/g, '');
+  if (digits.startsWith('0047')) {
+    return `+47${digits.slice(4)}`;
+  }
+  if (digits.startsWith('47')) {
+    return `+${digits}`;
+  }
+  if (digits.startsWith('0')) {
+    return `+47${digits.slice(1)}`;
+  }
+  return `+47${digits}`;
+};
+
 export default function CustomerSubunitsPage() {
   const { activeCustomerId, isCustomerAdmin, customerMemberships, loading } = useAuth();
   const router = useRouter();
@@ -198,6 +219,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
         throw new Error('Systemeier mangler på kunden.');
       }
       const { firstName, lastName } = splitContactName(values.contactPerson);
+      const normalizedPhone = ensureNorwegianPhone(values.contactPhone);
       const response = await fetch('/api/company-users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -209,7 +231,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
             firstName,
             lastName,
             email: values.contactEmail,
-            phone: values.contactPhone,
+            phone: normalizedPhone,
             roles: ['admin'],
             status: 'active',
           },
@@ -390,6 +412,9 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
         : false;
       const payload: CustomerPayload = {
         ...customerValues,
+        contactPhone: customerValues.contactPhone?.trim() ?? '',
+        contactPerson: customerValues.contactPerson.trim(),
+        contactEmail: customerValues.contactEmail.trim(),
         allowSubunits: allowSubunitsValue,
         parentCustomerId: customer.id,
         parentCustomerName: customer.companyName,

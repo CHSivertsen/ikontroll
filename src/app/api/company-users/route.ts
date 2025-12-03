@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
-import { randomBytes } from 'crypto';
 
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 
@@ -14,16 +13,6 @@ const PORTAL_LOGIN_URL =
   process.env.PORTAL_LOGIN_URL ??
   process.env.NEXT_PUBLIC_PORTAL_URL ??
   'https://portal.ikontroll.no/login';
-const PORTAL_MAGIC_LOGIN_URL =
-  process.env.PORTAL_MAGIC_LOGIN_URL ??
-  PORTAL_LOGIN_URL.replace(/\/login$/, '/magic-login');
-const MAGIC_LINK_TTL_MS = Number(process.env.MAGIC_LINK_TTL_MS ?? 1000 * 60 * 30); // 30 min default
-const MAGIC_LINK_COLLECTION = adminDb.collection('magicLinks');
-const FIREBASE_WEB_API_KEY =
-  process.env.FIREBASE_SERVER_API_KEY ??
-  process.env.FIREBASE_API_KEY ??
-  process.env.NEXT_PUBLIC_FIREBASE_API_KEY ??
-  null;
 
 type CompanyUserRole = 'admin' | 'user';
 
@@ -44,7 +33,6 @@ interface CompanyUserPayload {
   userId?: string;
   authUid?: string;
   user?: UserPayloadBody;
-  password?: string;
 }
 
 const validateBasePayload = (
@@ -228,33 +216,6 @@ const upsertUserDocument = async ({
   return { addedCourseIds };
 };
 
-const sendPasswordResetEmail = async (email: string) => {
-  if (!FIREBASE_WEB_API_KEY) {
-    console.warn('FIREBASE_WEB_API_KEY is not configured; skipping password reset email.');
-    return;
-  }
-
-  try {
-    const response = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${FIREBASE_WEB_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestType: 'PASSWORD_RESET',
-          email,
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Failed to trigger password reset email', errorText);
-    }
-  } catch (error) {
-    console.error('Failed to trigger password reset email', error);
-  }
-};
 
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
@@ -273,10 +234,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Mangler payload' }, { status: 400 });
   }
 
-  const { companyId, customerId, customerName, password } = body;
+  const { companyId, customerId, customerName } = body;
   const user = body.user!;
-  const providedPassword =
-    typeof password === 'string' ? password.trim() : '';
 
   try {
     let authUser = null;
@@ -288,17 +247,18 @@ export async function POST(request: NextRequest) {
       authUser = null;
     }
 
-    let createdNewAuthUser = false;
     if (!authUser) {
-      const initialPassword =
-        providedPassword || randomBytes(16).toString('base64url');
+      const initialPassword = generateTemporaryPassword();
       authUser = await adminAuth.createUser({
         email: user.email,
         password: initialPassword,
         displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
         disabled: user.status === 'inactive',
       });
-      createdNewAuthUser = true;
+    } else if (user.status === 'inactive' || user.status === 'active') {
+      await adminAuth.updateUser(authUser.uid, {
+        disabled: user.status === 'inactive',
+      });
     }
 
     const { addedCourseIds } = await upsertUserDocument({
@@ -310,11 +270,13 @@ export async function POST(request: NextRequest) {
       preserveProfile: authUserExisted,
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid);
+    console.log('POST /api/company-users addedCourseIds', {
+      email: user.email,
+      addedCourseIds,
+    });
 
-    if (createdNewAuthUser && !providedPassword) {
-      await sendPasswordResetEmail(user.email);
-    }
+    await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid, user.email);
+
 
     return NextResponse.json({
       id: authUser.uid,
@@ -366,7 +328,12 @@ export async function PATCH(request: NextRequest) {
       disabled: user.status === 'inactive',
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds, authTarget);
+    console.log('PATCH /api/company-users addedCourseIds', {
+      email: user.email,
+      addedCourseIds,
+    });
+
+    await notifyCourseAssignments(user.phone, addedCourseIds, authTarget, user.email);
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
@@ -446,7 +413,74 @@ export async function DELETE(request: NextRequest) {
 const SVEVE_ENDPOINT = 'https://sveve.no/SMS/SendMessage';
 const SVEVE_TEST_MODE = process.env.SVEVE_TEST === 'true';
 
-const formatPhoneNumber = (raw: string) => raw.replace(/[^\d+]/g, '').replace(/^00/, '+');
+const formatPhoneNumber = (raw: string | undefined | null) => {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return '';
+  }
+  let normalized = trimmed.replace(/[^\d+]/g, '');
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.startsWith('00')) {
+    normalized = `+${normalized.slice(2)}`;
+  }
+  if (!normalized.startsWith('+')) {
+    normalized = `+${normalized}`;
+  }
+  return normalized;
+};
+
+const generateTemporaryPassword = (length: number = 6) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < length; i += 1) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+const buildLoginUrlWithEmail = (email: string) => {
+  try {
+    const loginUrl = new URL(PORTAL_LOGIN_URL);
+    if (email && email.trim()) {
+      loginUrl.searchParams.set('email', email.trim());
+    }
+    return loginUrl.toString();
+  } catch {
+    return PORTAL_LOGIN_URL;
+  }
+};
+
+const sendCredentialsSms = async ({
+  phone,
+  email,
+  password,
+  courseTitles,
+}: {
+  phone: string | undefined;
+  email: string;
+  password: string;
+  courseTitles: string[];
+}) => {
+  const recipient = formatPhoneNumber(phone);
+  if (!recipient) {
+    return;
+  }
+  const loginUrl = buildLoginUrlWithEmail(email);
+  const uniqueTitles = Array.from(new Set(courseTitles));
+  const courseText = uniqueTitles.length
+    ? uniqueTitles.length === 1
+      ? `Du har fått tilgang til kurset ${uniqueTitles[0]}.`
+      : `Du har fått tilgang til kursene ${uniqueTitles.join(', ')}.`
+    : 'Du har fått tilgang til Ikontroll.';
+  const message = `${courseText} Brukernavn: ${email}. Passord: ${password}. Logg inn: ${loginUrl}`;
+  await sendSveveSms(recipient, message);
+};
+
 
 const resolveCourseTitle = (data: Record<string, unknown> | undefined) => {
   if (!data) return 'Nytt kurs';
@@ -483,79 +517,6 @@ const fetchCourseTitles = async (courseIds: string[]) => {
   return Object.fromEntries(entries);
 };
 
-const generateMagicCode = () =>
-  randomBytes(6)
-    .toString('base64')
-    .replace(/[^a-zA-Z0-9]/g, '')
-    .slice(0, 10)
-    .toLowerCase();
-
-const createMagicLoginCode = async ({
-  authUid,
-  courseId,
-}: {
-  authUid: string;
-  courseId?: string;
-}) => {
-  const redirectPath = courseId ? `/my-courses/${courseId}` : '/my-courses';
-  let attempts = 0;
-  while (attempts < 5) {
-    const code = generateMagicCode();
-    const docRef = MAGIC_LINK_COLLECTION.doc(code);
-    const existing = await docRef.get();
-    if (existing.exists) {
-      attempts += 1;
-      continue;
-    }
-
-    await docRef.set({
-      authUid,
-      courseId: courseId ?? null,
-      redirect: redirectPath,
-      expiresAt: Date.now() + MAGIC_LINK_TTL_MS,
-      createdAt: FieldValue.serverTimestamp(),
-      consumed: false,
-    });
-
-    return `${PORTAL_MAGIC_LOGIN_URL}?code=${code}`;
-  }
-  throw new Error('Failed to generate unique magic login code');
-};
-
-const buildMagicLoginUrl = async ({
-  authUid,
-  courseId,
-}: {
-  authUid: string | undefined;
-  courseId?: string;
-}) => {
-  if (!authUid) {
-    return PORTAL_LOGIN_URL;
-  }
-
-  try {
-    return await createMagicLoginCode({ authUid, courseId });
-  } catch (error) {
-    console.error('Failed to create magic code, falling back to token', error);
-    try {
-      const customToken = await adminAuth.createCustomToken(authUid, {
-        loginSource: 'sms',
-        issuedAt: Date.now(),
-        ...(courseId ? { courseId } : {}),
-      });
-      const targetUrl = new URL(PORTAL_MAGIC_LOGIN_URL);
-      targetUrl.searchParams.set('token', customToken);
-      if (courseId) {
-        targetUrl.searchParams.set('redirect', `/my-courses/${courseId}`);
-      }
-      return targetUrl.toString();
-    } catch (fallbackError) {
-      console.error('Failed to create fallback magic token', fallbackError);
-      return PORTAL_LOGIN_URL;
-    }
-  }
-};
-
 const sendSveveSms = async (to: string, text: string) => {
   if (!SVEVE_USERNAME || !SVEVE_PASSWORD) {
     console.warn('Sveve credentials missing, skipping SMS.');
@@ -576,6 +537,7 @@ const sendSveveSms = async (to: string, text: string) => {
     test: SVEVE_TEST_MODE ? 'true' : 'false',
   });
   try {
+    console.log('Sending Sveve SMS', { to: clean });
     const response = await fetch(`${SVEVE_ENDPOINT}?${query.toString()}`, {
       method: 'GET',
     });
@@ -599,19 +561,24 @@ const notifyCourseAssignments = async (
   phone: string | undefined,
   courseIds: string[],
   authUid: string | undefined,
+  email: string,
 ) => {
-  if (!phone || !courseIds.length) {
+  const hasAuthUid = Boolean(authUid);
+  if (!courseIds.length || !authUid) {
+    console.log('notifyCourseAssignments skipped', {
+      courseIdsLength: courseIds.length,
+      hasAuthUid,
+    });
     return;
   }
-  const titles = await fetchCourseTitles(courseIds);
-  await Promise.all(
-    courseIds.map(async (courseId) => {
-      const courseTitle = titles[courseId] ?? 'Nytt kurs';
-      const magicLink = await buildMagicLoginUrl({ authUid, courseId });
-      return sendSveveSms(
-        phone,
-        `Du har fått tilgang til kurset ${courseTitle}. Logg inn her: ${magicLink}`,
-      );
-    }),
-  );
+  console.log('notifyCourseAssignments sending SMS', {
+    courseIds,
+    email,
+    hasPhone: Boolean(phone),
+  });
+  const titlesMap = await fetchCourseTitles(courseIds);
+  const courseTitles = courseIds.map((courseId) => titlesMap[courseId] ?? 'Nytt kurs');
+  const password = generateTemporaryPassword();
+  await adminAuth.updateUser(authUid, { password });
+  await sendCredentialsSms({ phone, email, password, courseTitles });
 };

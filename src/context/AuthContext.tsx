@@ -59,13 +59,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return localStorage.getItem(CUSTOMER_STORAGE_KEY);
   });
   const [loading, setLoading] = useState(true);
-  const [portalModeState, setPortalModeState] = useState<PortalMode | null>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    const stored = window.localStorage.getItem(PORTAL_MODE_STORAGE_KEY);
-    return stored === 'admin' || stored === 'user' ? (stored as PortalMode) : null;
-  });
+  const [portalModeState, setPortalModeState] = useState<PortalMode | null>(null);
+  const [portalModeHydrated, setPortalModeHydrated] = useState(false);
 
   const updateCompany = useCallback((id: string | null) => {
     setCompanyIdState(id);
@@ -104,9 +99,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     if (mode) {
-      localStorage.setItem(PORTAL_MODE_STORAGE_KEY, mode);
+      window.sessionStorage.setItem(PORTAL_MODE_STORAGE_KEY, mode);
     } else {
-      localStorage.removeItem(PORTAL_MODE_STORAGE_KEY);
+      window.sessionStorage.removeItem(PORTAL_MODE_STORAGE_KEY);
     }
   }, []);
 
@@ -116,6 +111,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     },
     [persistPortalMode],
   );
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const stored = window.sessionStorage.getItem(PORTAL_MODE_STORAGE_KEY);
+    if (stored === 'admin' || stored === 'user') {
+      setPortalModeState(stored as PortalMode);
+    }
+    setPortalModeHydrated(true);
+  }, []);
 
   useEffect(() => {
     let profileUnsubscribe: (() => void) | null = null;
@@ -283,15 +290,30 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         ? membership.roles.includes('user')
         : false,
     );
-  const needsRoleChoice = hasAdminAccess && hasConsumerAccess && !portalModeState;
+  const needsRoleChoice =
+    portalModeHydrated && !loading && hasAdminAccess && hasConsumerAccess && !portalModeState;
 
   useEffect(() => {
+    if (loading || !portalModeHydrated) {
+      return;
+    }
+    if (!hasAdminAccess && !hasConsumerAccess) {
+      persistPortalMode(null);
+      return;
+    }
     if (!hasAdminAccess && portalModeState === 'admin') {
       persistPortalMode(hasConsumerAccess ? 'user' : null);
     } else if (!hasConsumerAccess && portalModeState === 'user') {
       persistPortalMode(hasAdminAccess ? 'admin' : null);
     }
-  }, [hasAdminAccess, hasConsumerAccess, portalModeState, persistPortalMode]);
+  }, [
+    hasAdminAccess,
+    hasConsumerAccess,
+    portalModeState,
+    persistPortalMode,
+    loading,
+    portalModeHydrated,
+  ]);
 
   let portalMode: PortalMode =
     portalModeState ?? (hasAdminAccess ? 'admin' : 'user');

@@ -16,12 +16,14 @@ import {
 import { db } from '@/lib/firebase';
 import type { Customer, CustomerPayload } from '@/types/customer';
 
+type SubunitPayload = CustomerPayload & { courseIds?: string[] };
+
 interface UseCustomerSubunitsState {
   subunits: Customer[];
   loading: boolean;
   error: string | null;
-  createSubunit: (payload: CustomerPayload) => Promise<string>;
-  updateSubunit: (id: string, payload: Partial<CustomerPayload>) => Promise<void>;
+  createSubunit: (payload: SubunitPayload) => Promise<string>;
+  updateSubunit: (id: string, payload: Partial<SubunitPayload>) => Promise<void>;
   deleteSubunit: (id: string) => Promise<void>;
 }
 
@@ -97,7 +99,7 @@ export const useCustomerSubunits = (
   }, [collectionRef, parentCustomerId]);
 
   const createSubunit = useCallback(
-    async (payload: CustomerPayload) => {
+    async (payload: SubunitPayload) => {
       if (!ownerCompanyId) {
         throw new Error('Manglende tilknytning til systemeier.');
       }
@@ -118,7 +120,7 @@ export const useCustomerSubunits = (
   );
 
   const updateSubunit = useCallback(
-    async (id: string, payload: Partial<CustomerPayload>) => {
+    async (id: string, payload: Partial<SubunitPayload>) => {
       if (!id) {
         throw new Error('Ugyldig underenhet-ID.');
       }

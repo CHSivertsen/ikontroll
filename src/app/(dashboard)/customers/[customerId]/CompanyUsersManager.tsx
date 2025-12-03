@@ -6,30 +6,45 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { useCompanyUsers } from '@/hooks/useCompanyUsers';
-import type { CompanyUser } from '@/types/companyUser';
+import type { CompanyUser, CompanyUserPayload } from '@/types/companyUser';
 
-const passwordSchema = z
+const ensureNorwegianPhone = (input: string) => {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.startsWith('+')) {
+    return trimmed;
+  }
+  const digits = trimmed.replace(/\s+/g, '');
+  if (digits.startsWith('0047')) {
+    return `+47${digits.slice(4)}`;
+  }
+  if (digits.startsWith('47')) {
+    return `+${digits}`;
+  }
+  if (digits.startsWith('0')) {
+    return `+47${digits.slice(1)}`;
+  }
+  return `+47${digits}`;
+};
+
+const nameField = z
   .string()
-  .min(8, 'Passord må være minst 8 tegn')
-  .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, 'Passord må inneholde både bokstaver og tall');
+  .trim()
+  .max(120, 'Navn kan ikke være lengre enn 120 tegn')
+  .optional()
+  .or(z.literal(''));
 
 const userSchema = z.object({
-  firstName: z.string().min(2, 'Fornavn må være minst 2 tegn'),
-  lastName: z.string().min(2, 'Etternavn må være minst 2 tegn'),
+  firstName: nameField,
+  lastName: nameField,
   email: z.string().email('Ugyldig e-post'),
   phone: z.string().min(4, 'Telefon må fylles ut'),
   roles: z
     .array(z.enum(['admin', 'user']))
     .min(1, 'Velg minst én rolle'),
   status: z.enum(['active', 'inactive']),
-  password: z.preprocess(
-    (val) => {
-      if (typeof val !== 'string') return undefined;
-      const trimmed = val.trim();
-      return trimmed.length === 0 ? undefined : trimmed;
-    },
-    passwordSchema,
-  ).optional(),
 });
 
 type UserFormValues = z.infer<typeof userSchema>;
@@ -41,7 +56,6 @@ const defaultValues: UserFormValues = {
   phone: '',
   roles: ['user'],
   status: 'active',
-  password: '',
 };
 
 interface Props {
@@ -88,7 +102,6 @@ export default function CompanyUsersManager({
           (membership) => membership.customerId === customerId,
         )?.roles ?? ['user'],
       status: user.status,
-      password: undefined,
     });
     setIsFormOpen(true);
     setFormError(null);
@@ -106,21 +119,45 @@ export default function CompanyUsersManager({
     try {
       setBusy(true);
       setFormError(null);
-      const { password, ...rest } = values;
+      const trimmedFirstName = values.firstName?.trim() ?? '';
+      const trimmedLastName = values.lastName?.trim() ?? '';
+      const normalizedEmail = values.email.trim();
+      const normalizedPhone = ensureNorwegianPhone(values.phone);
+
       if (editingUser) {
-        console.log('Updating user...', { id: editingUser.id, payload: rest });
-        await updateUser(editingUser.id, rest, editingUser.authUid, customerName);
-        console.log('Update completed');
-        closeForm();
-      } else {
-        if (!password) {
-          setFormError('Du må angi et passord for nye brukere.');
+        if (trimmedFirstName.length < 2) {
+          setFormError('Fornavn må være minst 2 tegn ved redigering.');
           setBusy(false);
           return;
         }
-        await createUser(rest, password, customerName);
+        if (trimmedLastName.length < 2) {
+          setFormError('Etternavn må være minst 2 tegn ved redigering.');
+          setBusy(false);
+          return;
+        }
+        const payload: CompanyUserPayload = {
+          firstName: trimmedFirstName,
+          lastName: trimmedLastName,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          roles: values.roles,
+          status: values.status,
+        };
+        await updateUser(editingUser.id, payload, editingUser.authUid, customerName);
         closeForm();
+        return;
       }
+
+      const payload: CompanyUserPayload = {
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        roles: ['user'],
+        status: 'active',
+      };
+      await createUser(payload, customerName);
+      closeForm();
     } catch (err) {
       console.error('Failed to save user', err);
       setFormError(
@@ -172,14 +209,16 @@ export default function CompanyUsersManager({
       const roleLabels = membershipRoles.length
         ? membershipRoles.map((role) => (role === 'admin' ? 'Admin' : 'Bruker')).join(', ')
         : 'Ingen';
+      const displayName = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim();
+      const primaryLabel = displayName || user.email;
 
       return (
         <tr key={user.id} className="border-b border-slate-100 text-sm">
         <td className="py-3">
-          <div className="font-semibold text-slate-900">
-            {user.firstName} {user.lastName}
-          </div>
-          <div className="text-xs text-slate-500">{user.email}</div>
+          <div className="font-semibold text-slate-900">{primaryLabel}</div>
+          {displayName && (
+            <div className="text-xs text-slate-500">{user.email}</div>
+          )}
         </td>
         <td className="py-3 text-slate-600">{user.phone}</td>
         <td className="py-3">
@@ -305,26 +344,28 @@ export default function CompanyUsersManager({
               )}
               className="mt-6 space-y-4"
             >
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Fornavn"
-                  error={form.formState.errors.firstName?.message}
-                >
-                  <input
-                    {...form.register('firstName')}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  />
-                </Field>
-                <Field
-                  label="Etternavn"
-                  error={form.formState.errors.lastName?.message}
-                >
-                  <input
-                    {...form.register('lastName')}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  />
-                </Field>
-              </div>
+              {editingUser && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field
+                    label="Fornavn"
+                    error={form.formState.errors.firstName?.message}
+                  >
+                    <input
+                      {...form.register('firstName')}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </Field>
+                  <Field
+                    label="Etternavn"
+                    error={form.formState.errors.lastName?.message}
+                  >
+                    <input
+                      {...form.register('lastName')}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </Field>
+                </div>
+              )}
               <Field label="E-post" error={form.formState.errors.email?.message}>
                 <input
                   type="email"
@@ -342,48 +383,37 @@ export default function CompanyUsersManager({
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 />
               </Field>
-              {!editingUser && (
-                <Field
-                  label="Passord (midlertidig)"
-                  error={form.formState.errors.password?.message}
-                >
-                  <input
-                    type="text"
-                    {...form.register('password')}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    placeholder="Minst 8 tegn, bokstaver og tall"
-                  />
-                </Field>
-              )}
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Roller" error={form.formState.errors.roles?.message}>
-                  <div className="flex flex-wrap gap-4">
-                    {(['admin', 'user'] as const).map((role) => (
-                      <label key={role} className="flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          value={role}
-                          {...form.register('roles')}
-                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
-                        />
-                        {role === 'admin' ? 'Admin' : 'Bruker'}
-                      </label>
-                    ))}
-                  </div>
-                </Field>
-                <Field
-                  label="Status"
-                  error={form.formState.errors.status?.message}
-                >
-                  <select
-                    {...form.register('status')}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              {editingUser && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Roller" error={form.formState.errors.roles?.message}>
+                    <div className="flex flex-wrap gap-4">
+                      {(['admin', 'user'] as const).map((role) => (
+                        <label key={role} className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            value={role}
+                            {...form.register('roles')}
+                            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                          />
+                          {role === 'admin' ? 'Admin' : 'Bruker'}
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field
+                    label="Status"
+                    error={form.formState.errors.status?.message}
                   >
-                    <option value="active">Aktiv</option>
-                    <option value="inactive">Inaktiv</option>
-                  </select>
-                </Field>
-              </div>
+                    <select
+                      {...form.register('status')}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="active">Aktiv</option>
+                      <option value="inactive">Inaktiv</option>
+                    </select>
+                  </Field>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-3">
                 <button
