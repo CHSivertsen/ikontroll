@@ -217,28 +217,39 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           const adminMemberships = allCustomerMemberships.filter((membership) =>
             membership.roles.includes('admin'),
           );
+          const consumerMemberships = allCustomerMemberships.filter((membership) =>
+            membership.roles.includes('user'),
+          );
           setCustomerMemberships(adminMemberships);
 
+          const selectionPreference = portalModeState ?? null;
           const selectionPool =
-            adminMemberships.length > 0 ? adminMemberships : allCustomerMemberships;
+            selectionPreference === 'user' && consumerMemberships.length
+              ? consumerMemberships
+              : adminMemberships.length
+              ? adminMemberships
+              : consumerMemberships.length
+              ? consumerMemberships
+              : allCustomerMemberships;
 
           if (selectionPool.length === 1) {
             updateActiveCustomer(selectionPool[0].customerId);
           } else if (!selectionPool.length) {
             updateActiveCustomer(null);
-          } else if (
-            selectionPool.every(
-              (membership) => membership.customerId !== activeCustomerId,
-            )
-          ) {
-            const stored = localStorage.getItem(CUSTOMER_STORAGE_KEY);
-            const validStored = selectionPool.find(
-              (membership) => membership.customerId === stored,
+          } else {
+            const belongsToAnyMembership = allCustomerMemberships.some(
+              (membership) => membership.customerId === activeCustomerId,
             );
-            if (validStored) {
-              setActiveCustomerIdState(validStored.customerId);
-            } else {
-              updateActiveCustomer(null, false);
+            if (!belongsToAnyMembership) {
+              const stored = localStorage.getItem(CUSTOMER_STORAGE_KEY);
+              const validStored = selectionPool.find(
+                (membership) => membership.customerId === stored,
+              );
+              if (validStored) {
+                setActiveCustomerIdState(validStored.customerId);
+              } else {
+                updateActiveCustomer(null, false);
+              }
             }
           }
 

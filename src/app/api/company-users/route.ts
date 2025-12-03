@@ -148,12 +148,14 @@ const upsertUserDocument = async ({
   companyId,
   customerId,
   customerName,
+  preserveProfile = false,
 }: {
   authUid: string;
   user: UserPayloadBody;
   companyId: string;
   customerId: string;
   customerName?: string;
+  preserveProfile?: boolean;
 }) => {
   const userDocRef = usersCollection.doc(authUid);
   const snapshot = await userDocRef.get();
@@ -179,12 +181,33 @@ const upsertUserDocument = async ({
         : rest,
   );
 
+  const resolvedFirstName =
+    preserveProfile && typeof existingData?.firstName === 'string'
+      ? (existingData.firstName as string)
+      : user.firstName;
+  const resolvedLastName =
+    preserveProfile && typeof existingData?.lastName === 'string'
+      ? (existingData.lastName as string)
+      : user.lastName;
+  const resolvedEmail =
+    preserveProfile && typeof existingData?.email === 'string'
+      ? (existingData.email as string)
+      : user.email;
+  const resolvedPhone =
+    preserveProfile && typeof existingData?.phone === 'string'
+      ? (existingData.phone as string)
+      : user.phone;
+  const resolvedStatus =
+    preserveProfile && typeof existingData?.status === 'string'
+      ? (existingData.status as string)
+      : user.status;
+
   const updatePayload: Record<string, unknown> = {
-    firstName: user.firstName,
-    lastName: user.lastName,
-    email: user.email,
-    phone: user.phone,
-    status: user.status,
+    firstName: resolvedFirstName,
+    lastName: resolvedLastName,
+    email: resolvedEmail,
+    phone: resolvedPhone,
+    status: resolvedStatus,
     authUid,
     customerIdRefs: FieldValue.arrayUnion(customerId),
     customerMemberships: sanitizedMemberships,
@@ -257,8 +280,10 @@ export async function POST(request: NextRequest) {
 
   try {
     let authUser = null;
+    let authUserExisted = false;
     try {
       authUser = await adminAuth.getUserByEmail(user.email);
+      authUserExisted = true;
     } catch {
       authUser = null;
     }
@@ -274,12 +299,6 @@ export async function POST(request: NextRequest) {
         disabled: user.status === 'inactive',
       });
       createdNewAuthUser = true;
-    } else {
-      await adminAuth.updateUser(authUser.uid, {
-        email: user.email,
-        displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
-        disabled: user.status === 'inactive',
-      });
     }
 
     const { addedCourseIds } = await upsertUserDocument({
@@ -288,6 +307,7 @@ export async function POST(request: NextRequest) {
       companyId,
       customerId,
       customerName,
+      preserveProfile: authUserExisted,
     });
 
     await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid);

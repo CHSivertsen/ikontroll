@@ -20,7 +20,11 @@ export default function MyCoursesPage() {
   const t = getTranslation(locale);
 
   const memberships = useMemo(
-    () => (profile?.customerMemberships as CustomerMembership[] | undefined) ?? [],
+    () =>
+      ((profile?.customerMemberships as CustomerMembership[] | undefined) ?? []).filter(
+        (membership) =>
+          Array.isArray(membership.roles) && membership.roles.includes('user'),
+      ),
     [profile?.customerMemberships],
   );
 
@@ -62,22 +66,14 @@ export default function MyCoursesPage() {
 
       {memberships.length > 1 && (
         <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          {memberships.map((membership) => {
-            const isActive = membership.customerId === selectedMembership?.customerId;
-            return (
-              <button
-                key={membership.customerId}
-                onClick={() => handleSelectCustomer(membership.customerId)}
-                className={`rounded-full px-4 py-1 text-sm font-semibold transition ${
-                  isActive
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {membership.customerName ?? membership.customerId}
-              </button>
-            );
-          })}
+          {memberships.map((membership) => (
+            <MembershipChip
+              key={membership.customerId}
+              membership={membership}
+              isActive={membership.customerId === selectedMembership?.customerId}
+              onSelect={handleSelectCustomer}
+            />
+          ))}
         </div>
       )}
 
@@ -120,6 +116,7 @@ function ConsumerCourseCard({ course, locale }: { course: Course; locale: string
   const { completedModules } = useCourseProgress(course.id);
   const { modules } = useCourseModules(course.id);
   const t = getTranslation(locale);
+  const [imageError, setImageError] = useState(false);
 
   const totalModules = modules.length;
   const completedCount = modules.filter((module) =>
@@ -139,11 +136,12 @@ function ConsumerCourseCard({ course, locale }: { course: Course; locale: string
       className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md"
     >
       <div className="relative h-48 bg-slate-100 overflow-hidden">
-        {course.courseImageUrl ? (
+        {course.courseImageUrl && !imageError ? (
           <img
             src={course.courseImageUrl}
             alt={getLocalizedValue(course.title, locale)}
             className="h-full w-full object-cover transition group-hover:scale-105"
+            onError={() => setImageError(true)}
           />
         ) : (
            <div className="flex h-full items-center justify-center text-slate-400">
@@ -173,5 +171,31 @@ function ConsumerCourseCard({ course, locale }: { course: Course; locale: string
         </div>
       </div>
     </Link>
+  );
+}
+
+function MembershipChip({
+  membership,
+  isActive,
+  onSelect,
+}: {
+  membership: CustomerMembership;
+  isActive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const { customer } = useCustomer(null, membership.customerId);
+  const displayName =
+    customer?.companyName ?? membership.customerName ?? membership.customerId;
+  return (
+    <button
+      onClick={() => onSelect(membership.customerId)}
+      className={`rounded-full px-4 py-1 text-sm font-semibold transition ${
+        isActive
+          ? 'bg-slate-900 text-white'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+      }`}
+    >
+      {displayName}
+    </button>
   );
 }

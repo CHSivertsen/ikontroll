@@ -133,7 +133,7 @@ export const Topbar = () => {
                 onClick={() => handleSwitchMode(portalMode === 'admin' ? 'user' : 'admin')}
                 className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                {portalMode === 'admin' ? 'Gå til brukervisning' : 'Gå til adminvisning'}
+                {portalMode === 'admin' ? 'Gå til kursvisning' : 'Gå til adminvisning'}
               </button>
             )}
             <button

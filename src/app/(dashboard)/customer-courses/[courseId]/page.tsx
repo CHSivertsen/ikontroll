@@ -9,7 +9,7 @@ import { useCourse } from '@/hooks/useCourse';
 import { useCourseModules } from '@/hooks/useCourseModules';
 import { useCourseUsersProgress } from '@/hooks/useCourseUsersProgress';
 import { useCustomer } from '@/hooks/useCustomer';
-import type { CompanyUser, CustomerMembership } from '@/types/companyUser';
+import type { CompanyUser, CompanyUserRole, CustomerMembership } from '@/types/companyUser';
 import { getLocalizedValue } from '@/utils/localization';
 
 export default function CourseDelegationPage() {
@@ -58,9 +58,9 @@ export default function CourseDelegationPage() {
   }, [users, searchTerm]);
 
 const ensureUserRoleForAssignment = (
-  roles: ('admin' | 'user')[] = [],
+  roles: CompanyUserRole[] = [],
   assigning: boolean,
-) => {
+): CompanyUserRole[] => {
   if (!assigning) {
     return roles;
   }
@@ -220,7 +220,7 @@ const ensureUserRoleForAssignment = (
           <div className="flex items-center gap-2">
             <input 
               type="text" 
-              placeholder="Søk etter deltager..." 
+              placeholder="Søk etter deltaker..." 
               className="rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-slate-400 focus:outline-none"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -259,7 +259,7 @@ const ensureUserRoleForAssignment = (
                     onChange={handleSelectAll}
                   />
                 </th>
-                <th className="px-4 py-3">Deltager</th>
+                <th className="px-4 py-3">Deltaker</th>
                 <th className="px-4 py-3">Tilgang</th>
                 <th className="px-4 py-3">Fremdrift</th>
                 <th className="px-4 py-3 text-right">Handling</th>
