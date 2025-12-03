@@ -107,7 +107,7 @@ export const useCustomerSubunits = (
       const docRef = await addDoc(collectionRef, {
         ...payload,
         allowSubunits: payload.allowSubunits ?? false,
-        courseIds: [],
+        courseIds: Array.isArray(payload.courseIds) ? payload.courseIds : [],
         createdByCompanyId: ownerCompanyId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

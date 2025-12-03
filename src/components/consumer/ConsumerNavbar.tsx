@@ -2,7 +2,7 @@
 
 import { GraduationCap, LogOut, Menu, User } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/context/AuthContext';
@@ -10,9 +10,16 @@ import { getPreferredLocale } from '@/utils/localization';
 import { getTranslation } from '@/utils/translations';
 
 const ConsumerNavbar = () => {
-  const { profile, logout } = useAuth();
+  const {
+    profile,
+    logout,
+    setPortalMode,
+    isCustomerAdmin,
+    isSystemOwner,
+  } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const [locale, setLocale] = useState('no');
 
   useEffect(() => {
@@ -24,6 +31,12 @@ const ConsumerNavbar = () => {
   const isActive = (path: string) => pathname === path;
 
   const toggleMenu = () => setIsMenuOpen((prev) => !prev);
+  const canSwitchToAdmin = isCustomerAdmin || isSystemOwner;
+
+  const handleSwitchToAdmin = () => {
+    setPortalMode('admin');
+    router.push('/dashboard');
+  };
 
   return (
     <>
@@ -66,6 +79,14 @@ const ConsumerNavbar = () => {
                 </p>
                 <p className="text-slate-500">{profile?.email}</p>
               </div>
+              {canSwitchToAdmin && (
+                <button
+                  onClick={handleSwitchToAdmin}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Adminvisning
+                </button>
+              )}
               <Link
                 href="/profile"
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white transition hover:bg-slate-800"
@@ -115,6 +136,17 @@ const ConsumerNavbar = () => {
                     <p className="text-xs text-slate-500">{profile?.email}</p>
                   </div>
                 </div>
+                    {canSwitchToAdmin && (
+                      <button
+                        onClick={() => {
+                          handleSwitchToAdmin();
+                          setIsMenuOpen(false);
+                        }}
+                        className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Gå til admin
+                      </button>
+                    )}
                 {/* Drawer content can be expanded here if needed */}
             </div>
             

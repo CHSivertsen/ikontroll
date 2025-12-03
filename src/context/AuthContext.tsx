@@ -26,9 +26,16 @@ type AuthContextValue = {
   setActiveCustomerId: (customerId: string | null) => void;
   isSystemOwner: boolean;
   isCustomerAdmin: boolean;
+  hasConsumerAccess: boolean;
+  portalMode: 'admin' | 'user';
+  setPortalMode: (mode: 'admin' | 'user') => void;
+  needsRoleChoice: boolean;
   loading: boolean;
   logout: () => Promise<void>;
 };
+
+type PortalMode = 'admin' | 'user';
+const PORTAL_MODE_STORAGE_KEY = 'ikontroll.portalMode';
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
@@ -52,6 +59,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return localStorage.getItem(CUSTOMER_STORAGE_KEY);
   });
   const [loading, setLoading] = useState(true);
+  const [portalModeState, setPortalModeState] = useState<PortalMode | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    const stored = window.localStorage.getItem(PORTAL_MODE_STORAGE_KEY);
+    return stored === 'admin' || stored === 'user' ? (stored as PortalMode) : null;
+  });
 
   const updateCompany = useCallback((id: string | null) => {
     setCompanyIdState(id);
@@ -84,6 +98,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     [],
   );
 
+  const persistPortalMode = useCallback((mode: PortalMode | null) => {
+    setPortalModeState(mode);
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (mode) {
+      localStorage.setItem(PORTAL_MODE_STORAGE_KEY, mode);
+    } else {
+      localStorage.removeItem(PORTAL_MODE_STORAGE_KEY);
+    }
+  }, []);
+
+  const setPortalMode = useCallback(
+    (mode: PortalMode) => {
+      persistPortalMode(mode);
+    },
+    [persistPortalMode],
+  );
+
   useEffect(() => {
     let profileUnsubscribe: (() => void) | null = null;
 
@@ -101,6 +134,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         updateCompany(null);
         updateActiveCustomer(null);
         setCustomerMemberships([]);
+        persistPortalMode(null);
         setLoading(false);
         return;
       }
@@ -231,6 +265,32 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const isSystemOwner =
     (profile?.companyIds ?? []).some((company) => company.roles?.includes('admin'));
   const isCustomerAdmin = customerMemberships.length > 0;
+  const hasAdminAccess = isSystemOwner || isCustomerAdmin;
+  const hasConsumerAccess =
+    (profile?.customerMemberships ?? []).some((membership) =>
+      Array.isArray(membership.roles)
+        ? membership.roles.includes('user')
+        : false,
+    );
+  const needsRoleChoice = hasAdminAccess && hasConsumerAccess && !portalModeState;
+
+  useEffect(() => {
+    if (!hasAdminAccess && portalModeState === 'admin') {
+      persistPortalMode(hasConsumerAccess ? 'user' : null);
+    } else if (!hasConsumerAccess && portalModeState === 'user') {
+      persistPortalMode(hasAdminAccess ? 'admin' : null);
+    }
+  }, [hasAdminAccess, hasConsumerAccess, portalModeState, persistPortalMode]);
+
+  let portalMode: PortalMode =
+    portalModeState ?? (hasAdminAccess ? 'admin' : 'user');
+
+  if (portalMode === 'admin' && !hasAdminAccess && hasConsumerAccess) {
+    portalMode = 'user';
+  }
+  if (portalMode === 'user' && !hasConsumerAccess && hasAdminAccess) {
+    portalMode = 'admin';
+  }
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -243,6 +303,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setActiveCustomerId: updateActiveCustomer,
       isSystemOwner,
       isCustomerAdmin,
+      hasConsumerAccess,
+      portalMode,
+      setPortalMode,
+      needsRoleChoice,
       loading,
       logout: () => signOut(auth),
     }),
@@ -254,6 +318,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       activeCustomerId,
       isSystemOwner,
       isCustomerAdmin,
+      hasConsumerAccess,
+      portalMode,
+      setPortalMode,
+      needsRoleChoice,
       loading,
       updateCompany,
       updateActiveCustomer,

@@ -57,6 +57,19 @@ export default function CourseDelegationPage() {
     });
   }, [users, searchTerm]);
 
+const ensureUserRoleForAssignment = (
+  roles: ('admin' | 'user')[] = [],
+  assigning: boolean,
+) => {
+  if (!assigning) {
+    return roles;
+  }
+  if (roles.includes('admin') && !roles.includes('user')) {
+    return [...roles, 'user'];
+  }
+  return roles;
+};
+
   // Assignment toggling
   const handleToggleAccess = async (
     userId: string,
@@ -78,6 +91,9 @@ export default function CourseDelegationPage() {
         ? currentCourses.filter((id: string) => id !== courseId)
         : [...currentCourses, courseId];
 
+      const assigning = !currentAssigned;
+      const nextRoles = ensureUserRoleForAssignment(membership.roles ?? [], assigning);
+
       await updateUser(
         user.id,
         {
@@ -85,7 +101,7 @@ export default function CourseDelegationPage() {
           lastName: user.lastName,
           email: user.email,
           phone: user.phone,
-          roles: membership.roles,
+          roles: nextRoles,
           status: user.status,
           assignedCourseIds: newCourses,
         },
@@ -140,6 +156,11 @@ export default function CourseDelegationPage() {
             ? [...currentCourses, courseId]
             : currentCourses.filter((id: string) => id !== courseId);
 
+          const nextRoles = ensureUserRoleForAssignment(
+            membership.roles ?? [],
+            assign,
+          );
+
           await updateUser(
             user.id,
             {
@@ -147,7 +168,7 @@ export default function CourseDelegationPage() {
               lastName: user.lastName,
               email: user.email,
               phone: user.phone,
-              roles: membership.roles,
+              roles: nextRoles,
               status: user.status,
               assignedCourseIds: newCourses,
             },

@@ -14,6 +14,10 @@ export const Topbar = () => {
     profile,
     logout,
     isCustomerAdmin,
+    isSystemOwner,
+    hasConsumerAccess,
+    portalMode,
+    setPortalMode,
     customerMemberships,
     activeCustomerId,
   } = useAuth();
@@ -93,6 +97,15 @@ export const Topbar = () => {
     }
   };
 
+  const canSwitchView = hasConsumerAccess && (isCustomerAdmin || isSystemOwner);
+
+  const handleSwitchMode = (mode: 'admin' | 'user') => {
+    setPortalMode(mode);
+    setOpen(false);
+    setPosition(null);
+    router.push(mode === 'admin' ? '/dashboard' : '/my-courses');
+  };
+
   const menu =
     open && position && typeof document !== 'undefined'
       ? createPortal(
@@ -113,6 +126,14 @@ export const Topbar = () => {
                 className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Min konto
+              </button>
+            )}
+            {canSwitchView && (
+              <button
+                onClick={() => handleSwitchMode(portalMode === 'admin' ? 'user' : 'admin')}
+                className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {portalMode === 'admin' ? 'Gå til brukervisning' : 'Gå til adminvisning'}
               </button>
             )}
             <button

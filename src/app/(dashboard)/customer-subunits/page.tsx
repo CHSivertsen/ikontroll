@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { useAuth } from '@/context/AuthContext';
 import { useCustomer } from '@/hooks/useCustomer';
 import { useCustomerSubunits } from '@/hooks/useCustomerSubunits';
+import { useCourses } from '@/hooks/useCourses';
 import type { Customer, CustomerPayload } from '@/types/customer';
 
 type BrregSuggestion = {
@@ -64,12 +65,10 @@ const customerSchema = z.object({
   contactPerson: z.string().min(2, 'Kontaktperson må fylles ut'),
   contactPhone: optionalPhone,
   contactEmail: z.string().email('Ugyldig e-postadresse'),
-  contactPassword: z
-    .preprocess(
-      (val) => (typeof val === 'string' ? val.trim() : undefined),
-      passwordSchema,
-    )
-    .optional(),
+  courseIds: z
+    .array(z.string())
+    .min(1, 'Velg minst ett kurs')
+    .default([]),
 });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
@@ -85,7 +84,7 @@ const defaultValues: CustomerFormValues = {
   contactPerson: '',
   contactPhone: '',
   contactEmail: '',
-  contactPassword: '',
+  courseIds: [],
 };
 
 const statusBadges: Record<string, string> = {
@@ -159,6 +158,7 @@ export default function CustomerSubunitsPage() {
 
 const SubunitManager = ({ customer }: { customer: Customer }) => {
   const ownerCompanyId = customer.createdByCompanyId ?? null;
+  const { courses } = useCourses(ownerCompanyId ?? null);
   const {
     subunits,
     loading,
@@ -193,17 +193,9 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
   const companyNameValue = form.watch('companyName');
 
   const createContactAdminUser = useCallback(
-    async (
-      customerId: string,
-      password: string,
-      values: CustomerFormValues,
-    ) => {
+    async (customerId: string, values: CustomerFormValues) => {
       if (!ownerCompanyId) {
         throw new Error('Systemeier mangler på kunden.');
-      }
-      const trimmedPassword = password.trim();
-      if (!trimmedPassword) {
-        throw new Error('Passord for kontaktperson må fylles ut.');
       }
       const { firstName, lastName } = splitContactName(values.contactPerson);
       const response = await fetch('/api/company-users', {
@@ -221,7 +213,6 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
             roles: ['admin'],
             status: 'active',
           },
-          password: trimmedPassword,
         }),
       });
       if (!response.ok) {
@@ -308,6 +299,19 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
     () => [...subunits].sort((a, b) => a.companyName.localeCompare(b.companyName)),
     [subunits],
   );
+  const availableCourses = useMemo(
+    () =>
+      courses
+        .map((course) => ({
+          id: course.id,
+          title:
+            typeof course.title === 'object'
+              ? course.title.no ?? course.title.en ?? 'Uten tittel'
+              : course.title ?? 'Uten tittel',
+        }))
+        .sort((a, b) => a.title.localeCompare(b.title)),
+    [courses],
+  );
 
   const openCreate = () => {
     setEditingCustomer(null);
@@ -358,7 +362,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
       contactPerson: subunit.contactPerson,
       contactPhone: subunit.contactPhone,
       contactEmail: subunit.contactEmail,
-      contactPassword: '',
+      courseIds: subunit.courseIds ?? [],
     });
     setIsFormOpen(true);
     setFormError(null);
@@ -377,7 +381,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
 
   const onSubmit = async (values: CustomerFormValues) => {
     if (!customer.id) return;
-    const { contactPassword, ...customerValues } = values;
+    const customerValues = values;
     try {
       setBusy(true);
       setFormError(null);
@@ -394,11 +398,6 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
       if (editingCustomer) {
         await updateSubunit(editingCustomer.id, payload);
       } else {
-        if (!contactPassword?.trim()) {
-          setFormError('Kontaktpersonens passord må fylles ut.');
-          setBusy(false);
-          return;
-        }
         if (!ownerCompanyId) {
           setFormError('Fant ikke tilknyttet systemeier.');
           setBusy(false);
@@ -407,7 +406,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
         let createdCustomerId: string | null = null;
         try {
           createdCustomerId = await createSubunit(payload);
-          await createContactAdminUser(createdCustomerId, contactPassword, values);
+          await createContactAdminUser(createdCustomerId, values);
         } catch (err) {
           if (createdCustomerId) {
             await deleteSubunit(createdCustomerId).catch((deleteErr) =>
@@ -744,18 +743,36 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   />
                 </Field>
-                {!editingCustomer && (
+
+                <div className="md:col-span-2">
                   <Field
-                    label="Passord for kontaktperson"
-                    error={form.formState.errors.contactPassword?.message}
+                    label="Tilgjengelige kurs"
+                    hint="Velg hvilke kurs underenheten skal ha tilgang til"
+                    error={form.formState.errors.courseIds?.message}
                   >
-                    <input
-                      type="text"
-                      {...form.register('contactPassword')}
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    />
+                    <div className="flex flex-wrap gap-2">
+                      {availableCourses.length === 0 && (
+                        <p className="text-sm text-slate-500">
+                          Ingen kurs tilgjengelig for systemeier ennå.
+                        </p>
+                      )}
+                      {availableCourses.map((course) => (
+                        <label
+                          key={course.id}
+                          className="flex items-center gap-2 rounded-full border border-slate-200 px-4 py-1 text-sm text-slate-700 transition hover:border-slate-300"
+                        >
+                          <input
+                            type="checkbox"
+                            value={course.id}
+                            {...form.register('courseIds')}
+                            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                          />
+                          {course.title}
+                        </label>
+                      ))}
+                    </div>
                   </Field>
-                )}
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-3">

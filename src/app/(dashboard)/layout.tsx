@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 
 import { CompanyPicker } from '@/components/CompanyPicker';
 import { CustomerPicker } from '@/components/CustomerPicker';
+import PortalModePrompt from '@/components/PortalModePrompt';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 import { useAuth } from '@/context/AuthContext';
@@ -21,6 +22,9 @@ export default function DashboardLayout({
     loading,
     isSystemOwner,
     isCustomerAdmin,
+    hasConsumerAccess,
+    portalMode,
+    needsRoleChoice,
     activeCustomerId,
     customerMemberships,
     logout,
@@ -32,6 +36,17 @@ export default function DashboardLayout({
       router.replace('/login');
     }
   }, [firebaseUser, loading, router]);
+
+  useEffect(() => {
+    if (
+      !loading &&
+      !needsRoleChoice &&
+      portalMode === 'user' &&
+      hasConsumerAccess
+    ) {
+      router.replace('/my-courses');
+    }
+  }, [hasConsumerAccess, loading, needsRoleChoice, portalMode, router]);
 
   if (loading) {
     return (
@@ -85,6 +100,7 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
+      <PortalModePrompt />
       <Topbar />
       <div className="flex flex-1">
         <Sidebar />

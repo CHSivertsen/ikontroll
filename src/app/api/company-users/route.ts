@@ -19,6 +19,11 @@ const PORTAL_MAGIC_LOGIN_URL =
   PORTAL_LOGIN_URL.replace(/\/login$/, '/magic-login');
 const MAGIC_LINK_TTL_MS = Number(process.env.MAGIC_LINK_TTL_MS ?? 1000 * 60 * 30); // 30 min default
 const MAGIC_LINK_COLLECTION = adminDb.collection('magicLinks');
+const FIREBASE_WEB_API_KEY =
+  process.env.FIREBASE_SERVER_API_KEY ??
+  process.env.FIREBASE_API_KEY ??
+  process.env.NEXT_PUBLIC_FIREBASE_API_KEY ??
+  null;
 
 type CompanyUserRole = 'admin' | 'user';
 
@@ -180,6 +185,34 @@ const upsertUserDocument = async ({
   return { addedCourseIds };
 };
 
+const sendPasswordResetEmail = async (email: string) => {
+  if (!FIREBASE_WEB_API_KEY) {
+    console.warn('FIREBASE_WEB_API_KEY is not configured; skipping password reset email.');
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${FIREBASE_WEB_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestType: 'PASSWORD_RESET',
+          email,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Failed to trigger password reset email', errorText);
+    }
+  } catch (error) {
+    console.error('Failed to trigger password reset email', error);
+  }
+};
+
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
   console.log('POST /api/company-users payload', body);
@@ -199,6 +232,8 @@ export async function POST(request: NextRequest) {
 
   const { companyId, customerId, customerName, password } = body;
   const user = body.user!;
+  const providedPassword =
+    typeof password === 'string' ? password.trim() : '';
 
   try {
     let authUser = null;
@@ -208,19 +243,17 @@ export async function POST(request: NextRequest) {
       authUser = null;
     }
 
+    let createdNewAuthUser = false;
     if (!authUser) {
-      if (!password) {
-        return NextResponse.json(
-          { error: 'Brukeren finnes ikke. Passord er påkrevd for nye brukere.' },
-          { status: 400 },
-        );
-      }
+      const initialPassword =
+        providedPassword || randomBytes(16).toString('base64url');
       authUser = await adminAuth.createUser({
         email: user.email,
-        password,
+        password: initialPassword,
         displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
         disabled: user.status === 'inactive',
       });
+      createdNewAuthUser = true;
     } else {
       await adminAuth.updateUser(authUser.uid, {
         email: user.email,
@@ -238,6 +271,10 @@ export async function POST(request: NextRequest) {
     });
 
     await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid);
+
+    if (createdNewAuthUser && !providedPassword) {
+      await sendPasswordResetEmail(user.email);
+    }
 
     return NextResponse.json({
       id: authUser.uid,
