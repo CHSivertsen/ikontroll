@@ -407,15 +407,12 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
     try {
       setBusy(true);
       setFormError(null);
-      const allowSubunitsValue = editingCustomer
-        ? editingCustomer.allowSubunits ?? false
-        : false;
       const payload: CustomerPayload = {
         ...customerValues,
         contactPhone: customerValues.contactPhone?.trim() ?? '',
         contactPerson: customerValues.contactPerson.trim(),
         contactEmail: customerValues.contactEmail.trim(),
-        allowSubunits: allowSubunitsValue,
+        allowSubunits: customerValues.allowSubunits ?? false,
         parentCustomerId: customer.id,
         parentCustomerName: customer.companyName,
       };
@@ -737,6 +734,24 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
                     <option value="inactive">Inaktiv</option>
                   </select>
                 </Field>
+                <div className="md:col-span-2">
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      {...form.register('allowSubunits')}
+                      className="mt-1 h-5 w-5 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                    />
+                    <div className="text-sm">
+                      <p className="font-semibold text-slate-900">
+                        Underenhet kan opprette egne underenheter
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Når aktivert kan administratorene i denne underenheten legge til sine
+                        egne foretak.
+                      </p>
+                    </div>
+                  </label>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
