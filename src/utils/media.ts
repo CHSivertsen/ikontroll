@@ -9,6 +9,13 @@ const randomId = () =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
 
+const coerceMediaType = (type: ModuleMediaItem['type'] | undefined): ModuleMediaItem['type'] => {
+  if (type === 'video' || type === 'document') {
+    return type;
+  }
+  return 'image';
+};
+
 const normalizeMediaItem = (item: unknown): ModuleMediaItem | null => {
   if (!item) return null;
   if (typeof item === 'string') {
@@ -17,10 +24,11 @@ const normalizeMediaItem = (item: unknown): ModuleMediaItem | null => {
   if (typeof item === 'object') {
     const maybe = item as Partial<ModuleMediaItem> & { url?: unknown; type?: unknown; id?: unknown };
     if (typeof maybe.url === 'string' && maybe.url.trim().length > 0) {
+      const normalizedType = coerceMediaType(maybe.type as ModuleMediaItem['type'] | undefined);
       return {
         id: typeof maybe.id === 'string' && maybe.id.trim().length > 0 ? maybe.id : randomId(),
         url: maybe.url,
-        type: maybe.type === 'video' ? 'video' : 'image',
+        type: normalizedType,
       };
     }
   }
@@ -77,7 +85,7 @@ export const ensureMediaLocales = (
     base[lang] = media?.[lang]?.map((item) => ({
       id: item.id ?? randomId(),
       url: item.url,
-      type: item.type === 'video' ? 'video' : 'image',
+      type: coerceMediaType(item.type),
     })) ?? [];
   });
   return base;

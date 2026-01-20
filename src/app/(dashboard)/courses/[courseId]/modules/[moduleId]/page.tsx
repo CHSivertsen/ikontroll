@@ -82,9 +82,10 @@ const sanitizeFileName = (name: string) =>
 const buildModuleAssetPath = (
   courseId: string,
   moduleId: string,
-  type: 'images' | 'videos',
+  type: 'images' | 'videos' | 'documents',
   file: File,
-) => `courses/${courseId}/modules/${moduleId}/${type}/${Date.now()}-${sanitizeFileName(file.name)}`;
+) =>
+  `courses/${courseId}/modules/${moduleId}/${type}/${Date.now()}-${sanitizeFileName(file.name)}`;
 
 const isYouTubeUrl = (url: string): boolean =>
   /youtu\.be|youtube\.com/.test(url.toLowerCase());
@@ -619,7 +620,9 @@ const LocaleMediaEditor = ({
   const items = media?.[activeLanguage] ?? [];
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState<'image' | 'video' | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const showUrlButtons = false; // Hide manual URL entry until further notice
+  const [uploading, setUploading] = useState<'image' | 'video' | 'document' | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const updateList = useCallback(
@@ -679,17 +682,19 @@ const LocaleMediaEditor = ({
     );
   };
 
-  const handleUploadClick = (type: 'image' | 'video') => {
+  const handleUploadClick = (type: 'image' | 'video' | 'document') => {
     if (type === 'image') {
       imageInputRef.current?.click();
-    } else {
+    } else if (type === 'video') {
       videoInputRef.current?.click();
+    } else {
+      documentInputRef.current?.click();
     }
   };
 
   const handleFileChange = async (
     event: ChangeEvent<HTMLInputElement>,
-    type: 'image' | 'video',
+    type: 'image' | 'video' | 'document',
   ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -699,7 +704,7 @@ const LocaleMediaEditor = ({
       const storagePath = buildModuleAssetPath(
         courseId,
         moduleId,
-        type === 'image' ? 'images' : 'videos',
+        type === 'image' ? 'images' : type === 'video' ? 'videos' : 'documents',
         file,
       );
       const storageRef = ref(storage, storagePath);
@@ -721,11 +726,13 @@ const LocaleMediaEditor = ({
     }
   };
 
-  const handleAddUrl = (type: 'image' | 'video') => {
+  const handleAddUrl = (type: 'image' | 'video' | 'document') => {
     const promptLabel =
       type === 'image'
         ? 'Lim inn URL til bilde'
-        : 'Lim inn URL til video (YouTube eller videofil)';
+        : type === 'video'
+          ? 'Lim inn URL til video (YouTube eller videofil)'
+          : 'Lim inn URL til PDF eller annet dokument';
     const next = window.prompt(promptLabel);
     if (!next) return;
     const trimmed = next.trim();
@@ -787,18 +794,37 @@ const LocaleMediaEditor = ({
         </button>
         <button
           type="button"
-          onClick={() => handleAddUrl('image')}
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+          onClick={() => handleUploadClick('document')}
+          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={uploading === 'document'}
         >
-          Legg til bilde-URL
+          {uploading === 'document' ? 'Laster opp …' : 'Last opp PDF'}
         </button>
-        <button
-          type="button"
-          onClick={() => handleAddUrl('video')}
-          className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-        >
-          Legg til video-URL
-        </button>
+        {showUrlButtons && (
+          <>
+            <button
+              type="button"
+              onClick={() => handleAddUrl('image')}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+            >
+              Legg til bilde-URL
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAddUrl('video')}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+            >
+              Legg til video-URL
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAddUrl('document')}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+            >
+              Legg til dokument-URL
+            </button>
+          </>
+        )}
       </div>
       <input
         ref={imageInputRef}
@@ -814,8 +840,31 @@ const LocaleMediaEditor = ({
         className="hidden"
         onChange={(event) => handleFileChange(event, 'video')}
       />
+      <input
+        ref={documentInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(event) => handleFileChange(event, 'document')}
+      />
     </div>
   );
+};
+
+const getFileNameFromUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const pathname = decodeURIComponent(parsed.pathname);
+    const segments = pathname.split('/');
+    const candidate = segments.pop();
+    if (candidate && candidate.trim()) {
+      return candidate;
+    }
+    return parsed.hostname;
+  } catch {
+    const parts = url.split('/');
+    return decodeURIComponent(parts[parts.length - 1] || url);
+  }
 };
 
 const SortableMediaCard = ({
@@ -834,6 +883,9 @@ const SortableMediaCard = ({
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     transition,
   };
+  const typeLabel =
+    item.type === 'video' ? 'Video' : item.type === 'document' ? 'Dokument' : 'Bilde';
+  const documentName = item.type === 'document' ? getFileNameFromUrl(item.url) : null;
 
   return (
     <div
@@ -854,56 +906,82 @@ const SortableMediaCard = ({
           ⇅
         </button>
         <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] uppercase tracking-wide text-slate-600">
-          {item.type === 'video' ? 'Video' : 'Bilde'}
+          {typeLabel}
         </span>
       </div>
       <div className="flex flex-col gap-3">
         <div className="flex h-48 w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
           {item.type === 'image' ? (
             <img src={item.url} alt="Forhåndsvis media" className="h-full w-full object-cover" />
-          ) : isYouTubeUrl(item.url) ? (
-            <iframe
-              src={item.url}
-              title="Video"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              className="h-full w-full"
-            />
+          ) : item.type === 'video' ? (
+            isYouTubeUrl(item.url) ? (
+              <iframe
+                src={item.url}
+                title="Video"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="h-full w-full"
+              />
+            ) : (
+              <video controls className="h-full w-full object-cover">
+                <source src={item.url} />
+                Nettleseren støtter ikke videoavspilling.
+              </video>
+            )
           ) : (
-            <video controls className="h-full w-full object-cover">
-              <source src={item.url} />
-              Nettleseren støtter ikke videoavspilling.
-            </video>
+            <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4 text-center text-slate-600">
+              <span className="text-4xl" role="img" aria-label="Dokument">
+                📄
+              </span>
+              <p className="text-xs font-semibold break-words">{documentName ?? 'Dokument'}</p>
+            </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold text-slate-600">
+        <div className="space-y-3">
+          <label className="block text-xs font-semibold text-slate-600">
             Type
-            <select
-              value={item.type}
-              onChange={(e) => onTypeChange(e.target.value as ModuleMediaItem['type'])}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            >
-              <option value="image">Bilde</option>
-              <option value="video">Video</option>
-            </select>
+            <div className="relative mt-1 w-full max-w-xs">
+              <select
+                value={item.type}
+                onChange={(e) => onTypeChange(e.target.value as ModuleMediaItem['type'])}
+                className="appearance-none w-full rounded-xl border border-slate-200 px-3 py-2 pr-10 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="image">Bilde</option>
+                <option value="video">Video</option>
+                <option value="document">Dokument (PDF)</option>
+              </select>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 0 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.25 8.29a.75.75 0 0 1-.02-1.08z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </span>
+            </div>
           </label>
-          <button
-            type="button"
-            onClick={() => window.open(item.url, '_blank')}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-          >
-            Åpne
-          </button>
-        </div>
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onRemove}
-            className="rounded-xl border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
-          >
-            Fjern
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.open(item.url, '_blank')}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+            >
+              Åpne
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
+            >
+              Fjern
+            </button>
+          </div>
         </div>
       </div>
     </div>

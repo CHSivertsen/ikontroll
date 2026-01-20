@@ -3,7 +3,7 @@ export type CourseStatus = 'active' | 'inactive';
 export type LocaleStringMap = Record<string, string>;
 export type LocaleStringArrayMap = Record<string, string[]>;
 
-export type ModuleMediaType = 'image' | 'video';
+export type ModuleMediaType = 'image' | 'video' | 'document';
 
 export interface ModuleMediaItem {
   id: string;

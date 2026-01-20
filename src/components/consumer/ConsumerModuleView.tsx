@@ -36,6 +36,23 @@ const getAlternativeLabel = (
   locale: string,
 ) => getLocalizedValue(alternative.altText, locale) || 'Alternativ';
 
+const getFileNameFromUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const pathname = decodeURIComponent(parsed.pathname);
+    const candidate = pathname.split('/').pop();
+    if (candidate && candidate.trim()) {
+      return candidate;
+    }
+    return parsed.hostname;
+  } catch {
+    const parts = url.split('/');
+    return decodeURIComponent(parts[parts.length - 1] || url);
+  }
+};
+
+type MediaPreviewType = 'image' | 'video' | 'document';
+
 export default function ConsumerModuleView({
   course,
   module,
@@ -75,18 +92,19 @@ export default function ConsumerModuleView({
   const localizedMedia = getLocalizedMediaItems(module.media, locale);
   const fallbackImages = getLocalizedList(module.imageUrls, locale);
   const fallbackVideos = getLocalizedList(module.videoUrls, locale);
-  const mediaItems = useMemo(() => {
-    if (localizedMedia.length) {
-      return localizedMedia.map((item) => ({
-        url: item.url,
-        type: item.type,
-      }));
-    }
-    return [
-      ...fallbackImages.map((url) => ({ url, type: 'image' as const })),
-      ...fallbackVideos.map((url) => ({ url, type: 'video' as const })),
-    ];
-  }, [localizedMedia, fallbackImages, fallbackVideos]);
+  const mediaItems = useMemo(
+    () =>
+      localizedMedia.length
+        ? localizedMedia.map((item) => ({
+            url: item.url,
+            type: item.type as MediaPreviewType,
+          }))
+        : [
+            ...fallbackImages.map((url) => ({ url, type: 'image' as const })),
+            ...fallbackVideos.map((url) => ({ url, type: 'video' as const })),
+          ],
+    [localizedMedia, fallbackImages, fallbackVideos],
+  );
   const moduleTitle = getLocalizedValue(module.title, locale) || t.modules.module;
   const summary = getLocalizedValue(module.summary, locale);
   const rawBodyHtml = getLocalizedValue(module.body, locale);
@@ -108,7 +126,7 @@ export default function ConsumerModuleView({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [showCourseComplete, setShowCourseComplete] = useState(false);
-  const [mediaPreview, setMediaPreview] = useState<{ url: string; type: 'image' | 'video' } | null>(
+  const [mediaPreview, setMediaPreview] = useState<{ url: string; type: MediaPreviewType } | null>(
     null,
   );
   const courseCompletionAcknowledgedRef = useRef(false);
@@ -302,6 +320,7 @@ export default function ConsumerModuleView({
               <div className="flex gap-4 overflow-x-auto pb-2">
                 {mediaItems.map(({ url, type }) => {
                   const isVideo = type === 'video';
+                  const isDocument = type === 'document';
                   return (
                     <button
                       key={url}
@@ -337,6 +356,15 @@ export default function ConsumerModuleView({
                             </span>
                           </div>
                         </>
+                      ) : isDocument ? (
+                        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-slate-700">
+                          <span className="text-4xl" role="img" aria-label="PDF">
+                            📄
+                          </span>
+                          <span className="text-xs font-semibold line-clamp-3 break-words">
+                            {getFileNameFromUrl(url)}
+                          </span>
+                        </div>
                       ) : (
                         <img src={url} alt="Modulbilde" className="h-full w-full object-cover" />
                       )}
@@ -565,6 +593,12 @@ export default function ConsumerModuleView({
                             {t.modules.videoNotSupported}
                           </video>
                         )
+                      ) : mediaPreview.type === 'document' ? (
+                        <iframe
+                          src={mediaPreview.url}
+                          title="Moduldokument"
+                          className="h-[80vh] w-full bg-white"
+                        />
                       ) : (
                         <img
                           src={mediaPreview.url}
