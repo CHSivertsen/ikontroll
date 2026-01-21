@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -10,7 +11,15 @@ import {
 } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore';
 import {
   DndContext,
   PointerSensor,
@@ -31,6 +40,7 @@ import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage
 import { useAuth } from '@/context/AuthContext';
 import { useCourse } from '@/hooks/useCourse';
 import { useCourseModules } from '@/hooks/useCourseModules';
+import { useCourses } from '@/hooks/useCourses';
 import { db, storage } from '@/lib/firebase';
 import {
   CourseModule,
@@ -53,6 +63,12 @@ type CourseInfoFormValues = {
 type ModuleQuickCreateFormValues = {
   title: string;
   description: string;
+};
+
+type DuplicateModuleFormValues = {
+  title: string;
+  mode: 'same' | 'other';
+  targetCourseId?: string;
 };
 
 const STATUS_LABELS: Record<'active' | 'inactive', string> = {
@@ -78,6 +94,15 @@ const getLocaleValue = (map: LocaleStringMap | undefined, lang = 'no') => {
   return firstEntry ?? '';
 };
 
+const buildDuplicateModuleTitle = (module: CourseModule | null, lang = 'no') => {
+  if (!module) return '';
+  const baseTitle = getLocaleValue(module.title, lang).trim();
+  if (!baseTitle) {
+    return 'Kopi av emne';
+  }
+  return `Kopi av ${baseTitle}`;
+};
+
 const createEmptyLocaleArrayMap = (
   languages: string[],
 ): LocaleStringArrayMap =>
@@ -98,12 +123,14 @@ const SortableModuleItem = ({
   courseId,
   onOpen,
   onDelete,
+  onDuplicate,
 }: {
   module: CourseModule;
   activeLanguage: string;
   courseId: string;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  onDuplicate: (module: CourseModule) => void;
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: module.id });
@@ -188,6 +215,12 @@ const SortableModuleItem = ({
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => onDuplicate(module)}
+            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+          >
+            Dupliser
+          </button>
+          <button
             onClick={() => onDelete(module.id)}
             className="flex h-8 w-8 items-center justify-center rounded-full border border-red-200 text-red-600 transition hover:border-red-300 hover:bg-red-50"
             title="Slett emne"
@@ -215,6 +248,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const router = useRouter();
   const { companyId } = useAuth();
   const { course, loading, error } = useCourse(courseId);
+  const { courses: allCourses } = useCourses(companyId ?? null);
   const {
     modules,
     loading: modulesLoading,
@@ -226,6 +260,9 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const [moduleItems, setModuleItems] = useState<CourseModule[]>([]);
   const [ordering, setOrdering] = useState(false);
   const [orderingError, setOrderingError] = useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<CourseModule | null>(null);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -504,6 +541,78 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     }
   };
 
+  const handleDuplicateModule = async (values: DuplicateModuleFormValues) => {
+    if (!duplicateTarget || !courseId) {
+      return;
+    }
+    try {
+      setDuplicating(true);
+      setDuplicateError(null);
+      const trimmedTitle = values.title.trim();
+      if (!trimmedTitle) {
+        setDuplicateError('Du må angi en tittel.');
+        return;
+      }
+
+      const destinationCourseId =
+        values.mode === 'other' ? values.targetCourseId?.trim() : courseId;
+
+      if (!destinationCourseId) {
+        setDuplicateError('Velg et kurs å kopiere emnet til.');
+        return;
+      }
+
+      const destinationModules =
+        destinationCourseId === courseId
+          ? moduleItems
+          : (
+              await getDocs(collection(db, 'courses', destinationCourseId, 'modules'))
+            ).docs.map((docSnap) => docSnap.data());
+
+      const maxOrder = destinationModules.reduce((max, item) => {
+        const orderValue =
+          typeof item.order === 'number'
+            ? item.order
+            : typeof item.order === 'string'
+              ? Number(item.order)
+              : 0;
+        if (!Number.isFinite(orderValue)) {
+          return max;
+        }
+        return Math.max(max, orderValue);
+      }, -1);
+
+      const nextTitle = { ...(duplicateTarget.title ?? {}) };
+      nextTitle.no = trimmedTitle;
+
+      const payload: CourseModulePayload = {
+        title: nextTitle,
+        summary: duplicateTarget.summary ?? {},
+        body: duplicateTarget.body ?? {},
+        media: duplicateTarget.media ?? {},
+        videoUrls: duplicateTarget.videoUrls ?? {},
+        imageUrls: duplicateTarget.imageUrls ?? {},
+        order: maxOrder + 1,
+        questions: duplicateTarget.questions ?? [],
+      };
+
+      await addDoc(collection(db, 'courses', destinationCourseId, 'modules'), {
+        ...payload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setDuplicateTarget(null);
+    } catch (err) {
+      console.error('Failed to duplicate module', err);
+      setDuplicateError(
+        err instanceof Error ? err.message : 'Kunne ikke duplisere emnet.',
+      );
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const addLanguage = (lang: string) => {
     const trimmed = lang.trim().toLowerCase();
     if (!trimmed) return;
@@ -651,6 +760,10 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
               courseId={courseId}
               onOpen={handleOpenModule}
               onDelete={handleDeleteModule}
+              onDuplicate={(target) => {
+                setDuplicateError(null);
+                setDuplicateTarget(target);
+              }}
             />
           ))}
         </div>
@@ -935,6 +1048,18 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
           errorMessage={quickCreateError}
         />
       )}
+      {duplicateTarget && (
+        <DuplicateModuleModal
+          module={duplicateTarget}
+          currentCourseId={courseId}
+          courses={allCourses}
+          onClose={() => setDuplicateTarget(null)}
+          onSubmit={handleDuplicateModule}
+          errorMessage={duplicateError}
+          loading={duplicating}
+          activeLanguage={activeLanguage}
+        />
+      )}
     </div>
   );
 }
@@ -1050,3 +1175,169 @@ const ModuleQuickCreateModal = ({
   );
 };
 
+const DuplicateModuleModal = ({
+  module,
+  currentCourseId,
+  courses,
+  onSubmit,
+  onClose,
+  errorMessage,
+  loading,
+  activeLanguage,
+}: {
+  module: CourseModule;
+  currentCourseId: string;
+  courses: Course[];
+  onSubmit: (values: DuplicateModuleFormValues) => Promise<void>;
+  onClose: () => void;
+  errorMessage: string | null;
+  loading: boolean;
+  activeLanguage: string;
+}) => {
+  const form = useForm<DuplicateModuleFormValues>({
+    defaultValues: { title: '', mode: 'same', targetCourseId: '' },
+  });
+  const otherCourses = useMemo(
+    () => courses.filter((course) => course.id !== currentCourseId),
+    [courses, currentCourseId],
+  );
+  const hasOtherCourses = otherCourses.length > 0;
+  const mode = form.watch('mode');
+
+  const lastModuleIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const isNewModule = module.id !== lastModuleIdRef.current;
+    lastModuleIdRef.current = module.id;
+    const currentMode = form.getValues('mode');
+    const currentTarget = form.getValues('targetCourseId');
+    const fallbackCourseId = otherCourses[0]?.id ?? '';
+    form.reset({
+      title: buildDuplicateModuleTitle(module, activeLanguage),
+      mode: isNewModule ? 'same' : (currentMode ?? 'same'),
+      targetCourseId: isNewModule
+        ? fallbackCourseId
+        : (currentTarget || fallbackCourseId),
+    });
+  }, [module, activeLanguage, form, otherCourses]);
+
+  const handleSubmit = form.handleSubmit(async (values) => {
+    await onSubmit(values);
+    form.reset();
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Dupliser emne
+            </p>
+            <h4 className="text-2xl font-semibold text-slate-900">Gi kopien et navn</h4>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 transition hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Lukk"
+            disabled={loading}
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+            <span className="flex items-center justify-between">
+              <span>Tittel</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {activeLanguage.toUpperCase()}
+              </span>
+            </span>
+            <input
+              {...form.register('title', { required: 'Tittel er påkrevd.' })}
+              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Gi emnet et nytt navn"
+              disabled={loading}
+            />
+            {form.formState.errors.title?.message && (
+              <p className="text-xs font-semibold text-red-600">
+                {form.formState.errors.title.message}
+              </p>
+            )}
+          </label>
+
+          <div className="space-y-2 text-sm font-medium text-slate-700">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Plassering
+            </p>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
+              <input
+                type="radio"
+                value="same"
+                {...form.register('mode')}
+                disabled={loading}
+              />
+              Dupliser i dette kurset
+            </label>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
+              <input
+                type="radio"
+                value="other"
+                {...form.register('mode')}
+                disabled={!hasOtherCourses || loading}
+              />
+              Kopier til et annet kurs
+            </label>
+            {!hasOtherCourses && (
+              <p className="text-xs text-slate-500">
+                Det finnes ingen andre kurs å kopiere emnet til.
+              </p>
+            )}
+          </div>
+
+          {mode === 'other' && (
+            <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+              Kurs
+              <select
+                {...form.register('targetCourseId')}
+                className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                disabled={!hasOtherCourses || loading}
+              >
+                {otherCourses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {getLocaleValue(course.title) || 'Uten tittel'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {errorMessage && (
+            <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+              {errorMessage}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={loading}
+            >
+              Avbryt
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+              disabled={loading}
+            >
+              {loading ? 'Dupliserer …' : 'Dupliser emne'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
