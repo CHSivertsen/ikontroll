@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ChangeEvent } from 'react';
 import {
   DndContext,
@@ -39,16 +39,9 @@ import type {
 } from '@/types/course';
 import { ensureMediaLocales, mediaMapToLegacyArrays } from '@/utils/media';
 
-import 'react-quill/dist/quill.snow.css';
+import Quill from 'quill';
+import 'quill/dist/quill.snow.css';
 
-const ReactQuill = dynamic(() => import('react-quill'), {
-  ssr: false,
-  loading: () => (
-    <div className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-500">
-      Laster editor …
-    </div>
-  ),
-});
 
 const DEFAULT_LANGUAGES = ['no', 'en'];
 
@@ -538,6 +531,198 @@ const LocaleFieldEditor = ({
   );
 };
 
+const QuillEditor = ({
+  value,
+  onChange,
+  modules,
+  formats,
+}: {
+  value: string;
+  onChange: (nextValue: string) => void;
+  modules: Record<string, unknown>;
+  formats: string[];
+}) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const quillRef = useRef<Quill | null>(null);
+  const lastHtmlRef = useRef<string>(value ?? '');
+  const [showTableActions, setShowTableActions] = useState(false);
+  const [tableActionsHost, setTableActionsHost] = useState<HTMLElement | null>(null);
+  type TableAction =
+    | 'insertRowAbove'
+    | 'insertRowBelow'
+    | 'insertColumnLeft'
+    | 'insertColumnRight'
+    | 'deleteRow'
+    | 'deleteColumn'
+    | 'deleteTable';
+
+  const updateTableActions = useCallback((range: { index: number; length: number } | null) => {
+    const quill = quillRef.current;
+    if (!quill || !range) {
+      setShowTableActions(false);
+      return;
+    }
+    const formats = quill.getFormat(range);
+    setShowTableActions(Boolean((formats as { table?: unknown }).table));
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || quillRef.current) {
+      return;
+    }
+
+    const quill = new Quill(containerRef.current, {
+      theme: 'snow',
+      modules,
+      formats,
+    });
+
+    quill.root.style.minHeight = '160px';
+
+    quill.on('text-change', (_delta, _oldDelta, source) => {
+      if (source !== 'user') {
+        return;
+      }
+      const html = quill.root.innerHTML;
+      if (html !== lastHtmlRef.current) {
+        lastHtmlRef.current = html;
+        onChange(html);
+      }
+      updateTableActions(quill.getSelection());
+    });
+
+    quill.on('selection-change', (range) => {
+      updateTableActions(range);
+    });
+
+    quillRef.current = quill;
+
+    const toolbarModule = quill.getModule('toolbar') as { container?: HTMLElement } | undefined;
+    const toolbarContainer = toolbarModule?.container;
+    if (toolbarContainer?.parentElement) {
+      let host = toolbarContainer.parentElement.querySelector(
+        '.quill-table-actions-host',
+      ) as HTMLElement | null;
+      if (!host) {
+        host = document.createElement('div');
+        host.className = 'quill-table-actions-host';
+        toolbarContainer.parentElement.insertBefore(host, toolbarContainer.nextSibling);
+      }
+      setTableActionsHost(host);
+    }
+
+    if (value) {
+      quill.clipboard.dangerouslyPasteHTML(value, 'silent');
+    } else {
+      quill.setText('', 'silent');
+    }
+    lastHtmlRef.current = quill.root.innerHTML;
+    updateTableActions(quill.getSelection());
+  }, [formats, modules, onChange, value]);
+
+  useEffect(() => {
+    const quill = quillRef.current;
+    if (!quill) {
+      return;
+    }
+    const nextHtml = value ?? '';
+    if (nextHtml === lastHtmlRef.current || nextHtml === quill.root.innerHTML) {
+      return;
+    }
+    const selection = quill.getSelection();
+    if (nextHtml) {
+      quill.clipboard.dangerouslyPasteHTML(nextHtml, 'silent');
+    } else {
+      quill.setText('', 'silent');
+    }
+    lastHtmlRef.current = quill.root.innerHTML;
+    if (selection) {
+      quill.setSelection(selection);
+    }
+  }, [value]);
+
+  const handleTableAction = (action: TableAction) => {
+    const quill = quillRef.current;
+    if (!quill) {
+      return;
+    }
+    const tableModule = quill.getModule('table') as
+      | Record<string, (() => void) | undefined>
+      | undefined;
+    const handler = tableModule?.[action];
+    if (typeof handler === 'function') {
+      handler.call(tableModule);
+      quill.focus();
+      updateTableActions(quill.getSelection());
+    }
+  };
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200">
+      <div ref={containerRef} />
+      {showTableActions &&
+        tableActionsHost &&
+        createPortal(
+          <div className="flex flex-wrap gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+            <span className="mr-2 text-[11px] uppercase tracking-wide text-slate-500">
+              Tabell
+            </span>
+            <button
+              type="button"
+              onClick={() => handleTableAction('insertRowAbove')}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Ny rad over
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('insertRowBelow')}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Ny rad under
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('insertColumnLeft')}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Ny kolonne venstre
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('insertColumnRight')}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Ny kolonne høyre
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('deleteRow')}
+              className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+            >
+              Slett rad
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('deleteColumn')}
+              className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+            >
+              Slett kolonne
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTableAction('deleteTable')}
+              className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+            >
+              Slett tabell
+            </button>
+          </div>,
+          tableActionsHost,
+        )}
+    </div>
+  );
+};
+
 const LocaleRichEditor = ({
   label,
   value,
@@ -558,18 +743,47 @@ const LocaleRichEditor = ({
 
   const modulesConfig = useMemo(
     () => ({
-      toolbar: [
-        [{ header: [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        [{ list: 'ordered' }, { list: 'bullet' }],
-        ['link', 'clean'],
-      ],
+      toolbar: {
+        container: [
+          [{ header: [1, 2, 3, false] }],
+          ['bold', 'italic', 'underline', 'strike'],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link', 'clean'],
+          ['table'],
+        ],
+        handlers: {
+          table(this: { quill: Quill }) {
+            const tableModule = this.quill?.getModule('table') as
+              | { insertTable?: (rows: number, columns: number) => void }
+              | undefined;
+            if (tableModule?.insertTable) {
+              tableModule.insertTable(3, 3);
+            }
+          },
+        },
+      },
+      table: true,
     }),
     [],
   );
 
   const formats = useMemo(
-    () => ['header', 'bold', 'italic', 'underline', 'strike', 'list', 'bullet', 'ordered', 'link'],
+    () => [
+      'header',
+      'bold',
+      'italic',
+      'underline',
+      'strike',
+      'list',
+      'bullet',
+      'ordered',
+      'link',
+      // Quill v2 built-in table formats
+      'table',
+      'table-row',
+      'table-body',
+      'table-container',
+    ],
     [],
   );
 
@@ -585,16 +799,12 @@ const LocaleRichEditor = ({
           {activeLanguage.toUpperCase()}
         </span>
       </div>
-      <div className="rounded-xl border border-slate-200">
-        <ReactQuill
-          theme="snow"
-          value={currentValue}
-          onChange={handleChange}
-          modules={modulesConfig}
-          formats={formats}
-          className="min-h-[160px]"
-        />
-      </div>
+      <QuillEditor
+        value={currentValue}
+        onChange={handleChange}
+        modules={modulesConfig}
+        formats={formats}
+      />
       <p className="text-xs text-slate-400">
         Velg tekst og bruk verktøylinjen for å formatere innholdet.
       </p>
