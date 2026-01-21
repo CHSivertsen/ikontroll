@@ -1,11 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  writeBatch,
+} from 'firebase/firestore';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCourses } from '@/hooks/useCourses';
+import { db } from '@/lib/firebase';
 import type {
   Course,
   CoursePayload,
@@ -17,6 +27,10 @@ type CourseFormValues = {
   title: string;
   description?: string;
   status: CourseStatus;
+};
+
+type DuplicateCourseFormValues = {
+  title: string;
 };
 
 const STATUS_LABELS: Record<CourseStatus, string> = {
@@ -36,6 +50,28 @@ const getLocaleValue = (map: LocaleStringMap | undefined, lang = 'no') => {
   return firstEntry ?? '';
 };
 
+const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
+  if (!value) {
+    return { no: '' };
+  }
+  if (typeof value === 'string') {
+    return { no: value };
+  }
+  if (typeof value === 'object') {
+    return value as LocaleStringMap;
+  }
+  return { no: String(value) };
+};
+
+const buildDuplicateTitle = (course: Course | null) => {
+  if (!course) return '';
+  const baseTitle = getLocaleValue(course.title).trim();
+  if (!baseTitle) {
+    return 'Kopi av kurs';
+  }
+  return `Kopi av ${baseTitle}`;
+};
+
 export default function CourseManager() {
   const router = useRouter();
   const { companyId, profile } = useAuth();
@@ -44,6 +80,9 @@ export default function CourseManager() {
   );
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<Course | null>(null);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
 
   const handleCreateCourse = async (values: CourseFormValues) => {
     try {
@@ -82,6 +121,81 @@ export default function CourseManager() {
     } catch (err) {
       console.error('Failed to delete course', err);
       alert('Kunne ikke slette kurs.');
+    }
+  };
+
+  const handleDuplicateCourse = async (values: DuplicateCourseFormValues) => {
+    if (!duplicateTarget) return;
+    try {
+      if (!companyId || !profile) {
+        throw new Error('Mangler selskapskontekst');
+      }
+      const trimmedTitle = values.title.trim();
+      if (!trimmedTitle) {
+        setDuplicateError('Du må angi en tittel for kopien.');
+        return;
+      }
+      setDuplicating(true);
+      setDuplicateError(null);
+
+      const sourceRef = doc(db, 'courses', duplicateTarget.id);
+      const sourceSnap = await getDoc(sourceRef);
+      if (!sourceSnap.exists()) {
+        throw new Error('Fant ikke kurset du vil duplisere.');
+      }
+      const sourceData = sourceSnap.data();
+      const nextTitle = {
+        ...normalizeLocaleMap(sourceData.title),
+        no: trimmedTitle,
+      };
+
+      const newCourseRef = await addDoc(collection(db, 'courses'), {
+        ...sourceData,
+        title: nextTitle,
+        companyId,
+        createdById: profile.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      const modulesSnap = await getDocs(
+        collection(db, 'courses', duplicateTarget.id, 'modules'),
+      );
+
+      let batch = writeBatch(db);
+      let writes = 0;
+      const commitBatch = async () => {
+        await batch.commit();
+        batch = writeBatch(db);
+        writes = 0;
+      };
+
+      for (const moduleDoc of modulesSnap.docs) {
+        const moduleData = moduleDoc.data();
+        const targetRef = doc(collection(db, 'courses', newCourseRef.id, 'modules'));
+        batch.set(targetRef, {
+          ...moduleData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        writes += 1;
+        if (writes >= 450) {
+          await commitBatch();
+        }
+      }
+
+      if (writes > 0) {
+        await commitBatch();
+      }
+
+      setDuplicateTarget(null);
+    } catch (err) {
+      console.error('Failed to duplicate course', err);
+      setDuplicateError(
+        err instanceof Error ? err.message : 'Kunne ikke duplisere kurset.',
+      );
+    } finally {
+      setDuplicating(false);
     }
   };
 
@@ -172,6 +286,15 @@ export default function CourseManager() {
                           Administrer
                         </button>
                         <button
+                          onClick={() => {
+                            setDuplicateError(null);
+                            setDuplicateTarget(course);
+                          }}
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          Dupliser
+                        </button>
+                        <button
                           onClick={() => handleDeleteCourse(course)}
                           className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-300 hover:bg-red-50"
                         >
@@ -197,6 +320,15 @@ export default function CourseManager() {
           onClose={() => setCreateOpen(false)}
           onSubmit={handleCreateCourse}
           errorMessage={formError}
+        />
+      )}
+      {duplicateTarget && (
+        <DuplicateCourseModal
+          course={duplicateTarget}
+          onClose={() => setDuplicateTarget(null)}
+          onSubmit={handleDuplicateCourse}
+          errorMessage={duplicateError}
+          loading={duplicating}
         />
       )}
     </>
@@ -296,6 +428,96 @@ const CreateCourseModal = ({
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
             >
               Lagre og administrer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const DuplicateCourseModal = ({
+  course,
+  onSubmit,
+  onClose,
+  errorMessage,
+  loading,
+}: {
+  course: Course;
+  onSubmit: (values: DuplicateCourseFormValues) => Promise<void>;
+  onClose: () => void;
+  errorMessage: string | null;
+  loading: boolean;
+}) => {
+  const form = useForm<DuplicateCourseFormValues>({
+    defaultValues: { title: '' },
+  });
+
+  useEffect(() => {
+    form.reset({ title: buildDuplicateTitle(course) });
+  }, [course, form]);
+
+  const handleSubmit = form.handleSubmit(async (values) => {
+    await onSubmit(values);
+    form.reset();
+  });
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Dupliser kurs
+            </p>
+            <h4 className="text-2xl font-semibold text-slate-900">Gi kopien et navn</h4>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 transition hover:text-slate-700 disabled:opacity-60"
+            aria-label="Lukk"
+            disabled={loading}
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+            <span className="flex items-center justify-between">
+              <span>Tittel</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                NO
+              </span>
+            </span>
+            <input
+              {...form.register('title', { required: true })}
+              className="rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              disabled={loading}
+            />
+          </label>
+
+          {errorMessage && (
+            <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+              {errorMessage}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              disabled={loading}
+            >
+              Avbryt
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+              disabled={loading}
+            >
+              {loading ? 'Dupliserer …' : 'Dupliser kurs'}
             </button>
           </div>
         </form>
