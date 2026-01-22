@@ -16,7 +16,7 @@ export default function CourseDelegationPage() {
   const params = useParams();
   const courseId = params.courseId as string;
   const router = useRouter();
-  const { activeCustomerId, isCustomerAdmin } = useAuth();
+  const { activeCustomerId, isCustomerAdmin, firebaseUser } = useAuth();
 
   // 1. Fetch Course Details
   const { course, loading: courseLoading } = useCourse(courseId);
@@ -43,6 +43,11 @@ export default function CourseDelegationPage() {
   // UI State for selection
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [isUpdating, setIsUpdating] = useState(false);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null);
+  const [creatingInvite, setCreatingInvite] = useState(false);
 
   // Derived data
   const totalModules = modules.length;
@@ -69,6 +74,56 @@ const ensureUserRoleForAssignment = (
   }
   return roles;
 };
+
+  const handleCreateInvite = async () => {
+    if (!firebaseUser || !activeCustomerId) {
+      return;
+    }
+    setCreatingInvite(true);
+    setInviteError(null);
+    setInviteMessage(null);
+    try {
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/course-invite/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courseId,
+          customerId: activeCustomerId,
+          idToken,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Kunne ikke opprette kode.');
+      }
+      const data = (await response.json().catch(() => ({}))) as { code?: string };
+      if (!data.code) {
+        throw new Error('Mottok ingen kode.');
+      }
+      setInviteCode(data.code);
+      if (typeof window !== 'undefined') {
+        setInviteLink(`${window.location.origin}/course-signup?code=${data.code}`);
+      }
+      setInviteMessage('Koden er opprettet og klar til deling.');
+    } catch (err) {
+      console.error('Failed to create invite code', err);
+      setInviteError(err instanceof Error ? err.message : 'Kunne ikke opprette kode.');
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
+  const handleCopy = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setInviteMessage(successMessage);
+      setInviteError(null);
+    } catch (err) {
+      console.error('Failed to copy invite', err);
+      setInviteError('Kunne ikke kopiere til utklippstavlen.');
+    }
+  };
 
   // Assignment toggling
   const handleToggleAccess = async (
@@ -213,6 +268,66 @@ const ensureUserRoleForAssignment = (
           </h1>
           <p className="text-slate-500">Administrer tilgang og se fremdrift</p>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Påmelding med kode</h2>
+            <p className="text-sm text-slate-500">
+              Del en kode slik at deltakere kan registrere seg selv til kurset.
+            </p>
+          </div>
+          <button
+            onClick={handleCreateInvite}
+            disabled={creatingInvite}
+            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {creatingInvite ? 'Oppretter…' : 'Opprett kode'}
+          </button>
+        </div>
+
+        {inviteCode && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-sm font-semibold text-slate-700">Kurskode</div>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm">
+              <span className="rounded-lg bg-white px-3 py-2 font-semibold text-slate-900">
+                {inviteCode}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCopy(inviteCode, 'Koden er kopiert.')}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+              >
+                Kopier kode
+              </button>
+            </div>
+            {inviteLink && (
+              <div className="mt-3 text-sm text-slate-600">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Registreringslenke
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="break-all rounded-lg bg-white px-3 py-2 text-xs text-slate-700">
+                    {inviteLink}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(inviteLink, 'Lenken er kopiert.')}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+                  >
+                    Kopier lenke
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {inviteMessage && (
+          <p className="mt-3 text-sm text-emerald-600">{inviteMessage}</p>
+        )}
+        {inviteError && <p className="mt-3 text-sm text-red-600">{inviteError}</p>}
       </div>
 
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

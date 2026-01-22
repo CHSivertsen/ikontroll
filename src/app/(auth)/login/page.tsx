@@ -34,6 +34,10 @@ export default function LoginPage() {
     if (queryEmail) {
       setEmail(queryEmail);
     }
+    const queryCode = params.get('code');
+    if (queryCode) {
+      window.sessionStorage.setItem('pendingCourseInviteCode', queryCode);
+    }
   }, []);
 
   useEffect(() => {

@@ -2,8 +2,9 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
+import { useAuth } from '@/context/AuthContext';
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 import type { Course } from '@/types/course';
 import type { CourseModule } from '@/types/course';
@@ -57,6 +58,9 @@ export default function ConsumerCourseView({
   );
 
   const t = getTranslation(locale);
+  const { firebaseUser } = useAuth();
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const description = getLocalizedValue(course?.description, locale);
   const updatedAt = course?.updatedAt ?? course?.createdAt;
@@ -65,6 +69,7 @@ export default function ConsumerCourseView({
   const completedCount = modules.filter((module) =>
     completedModules.includes(module.id),
   ).length;
+  const isCourseCompleted = totalModules > 0 && completedCount === totalModules;
   const courseProgressPercent = totalModules
     ? Math.round((completedCount / totalModules) * 100)
     : 0;
@@ -80,6 +85,42 @@ export default function ConsumerCourseView({
     const pending = modules.find((module) => !completedModules.includes(module.id));
     return (pending ?? modules[0])?.id ?? null;
   }, [modules, completedModules]);
+
+  const handleDownloadDiploma = useCallback(async () => {
+    if (!firebaseUser || downloading) {
+      return;
+    }
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/diploma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseId: course.id, idToken }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Kunne ikke laste ned kursbevis.');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `kursbevis-${course.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download diploma', error);
+      setDownloadError(
+        error instanceof Error ? error.message : 'Kunne ikke laste ned kursbevis.',
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }, [course.id, downloading, firebaseUser]);
 
   const handleOpenModule = useCallback(
     (moduleId: string) => {
@@ -169,6 +210,19 @@ export default function ConsumerCourseView({
               {startButtonLabel}
             </button>
           </div>
+          {isCourseCompleted && (
+            <div className="mt-3 flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadDiploma}
+                disabled={downloading}
+                className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white px-8 py-3 text-center text-base font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {downloading ? t.courses.diplomaDownloading : t.courses.downloadDiploma}
+              </button>
+              {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
+            </div>
+          )}
         </div>
       </section>
 

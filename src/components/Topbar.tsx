@@ -149,7 +149,7 @@ export const Topbar = () => {
 
   return (
     <>
-      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6">
+      <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
         <div className="flex items-center gap-4">
           <span className="text-lg font-semibold tracking-wide text-slate-900">
             IKontroll
@@ -172,7 +172,7 @@ export const Topbar = () => {
         <button
           ref={buttonRef}
           onClick={toggleMenu}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800"
           aria-haspopup="menu"
           aria-expanded={open}
         >

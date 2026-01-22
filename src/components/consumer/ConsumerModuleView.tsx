@@ -8,6 +8,7 @@ import { Dialog, Transition } from '@headlessui/react';
 
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 import { useCourseModules } from '@/hooks/useCourseModules';
+import { useAuth } from '@/context/AuthContext';
 import type {
   Course,
   CourseModule,
@@ -61,6 +62,7 @@ export default function ConsumerModuleView({
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedLang = searchParams.get('lang');
+  const { firebaseUser } = useAuth();
   const { completedModules, setModuleCompletion } = useCourseProgress(course.id);
   const { modules } = useCourseModules(course.id); // Needed to find next module
 
@@ -126,10 +128,13 @@ export default function ConsumerModuleView({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [showCourseComplete, setShowCourseComplete] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [mediaPreview, setMediaPreview] = useState<{ url: string; type: MediaPreviewType } | null>(
     null,
   );
   const courseCompletionAcknowledgedRef = useRef(false);
+  const completionRecordedRef = useRef(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
   const handleSelectAlternative = (questionId: string, alternativeId: string) => {
@@ -232,6 +237,71 @@ export default function ConsumerModuleView({
     setShowCourseComplete(false);
   }, []);
 
+  const recordCourseCompletion = useCallback(async () => {
+    if (!firebaseUser || completionRecordedRef.current) {
+      return;
+    }
+    completionRecordedRef.current = true;
+    try {
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/course-completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseId: course.id, idToken }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        console.error('Failed to record course completion', response.status, payload);
+        completionRecordedRef.current = false;
+      }
+    } catch (error) {
+      console.error('Failed to record course completion', error);
+      completionRecordedRef.current = false;
+    }
+  }, [course.id, firebaseUser]);
+
+  const handleDownloadDiploma = useCallback(async () => {
+    if (!firebaseUser || downloading) {
+      return;
+    }
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch('/api/diploma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseId: course.id, idToken }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Kunne ikke laste ned kursbevis.');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `kursbevis-${course.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download diploma', error);
+      setDownloadError(
+        error instanceof Error ? error.message : 'Kunne ikke laste ned kursbevis.',
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }, [course.id, downloading, firebaseUser]);
+
+  useEffect(() => {
+    if (showCourseComplete) {
+      recordCourseCompletion();
+    }
+  }, [recordCourseCompletion, showCourseComplete]);
+
   const handleReturnToCourse = useCallback(() => {
     acknowledgeCompletion();
     router.replace(courseOverviewHref);
@@ -273,13 +343,24 @@ export default function ConsumerModuleView({
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleReturnToCourse}
-          className="mt-4 rounded-2xl bg-slate-900 px-8 py-3 text-base font-semibold text-white transition hover:bg-slate-800"
-        >
-          {t.modules.backToOverview}
-        </button>
+        <div className="mt-4 flex flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={handleDownloadDiploma}
+            disabled={downloading}
+            className="rounded-2xl bg-slate-900 px-8 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {downloading ? t.courses.diplomaDownloading : t.courses.downloadDiploma}
+          </button>
+          <button
+            type="button"
+            onClick={handleReturnToCourse}
+            className="rounded-2xl border border-slate-200 bg-white px-8 py-3 text-base font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            {t.modules.backToOverview}
+          </button>
+          {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
+        </div>
       </div>
     );
   }

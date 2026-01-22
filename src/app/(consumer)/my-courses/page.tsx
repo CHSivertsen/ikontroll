@@ -1,8 +1,9 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useAuth } from '@/context/AuthContext';
 import { useConsumerCourses } from '@/hooks/useConsumerCourses';
@@ -15,8 +16,15 @@ import { useCourseModules } from '@/hooks/useCourseModules';
 import { useCourseProgress } from '@/hooks/useCourseProgress';
 
 export default function MyCoursesPage() {
-  const { profile, activeCustomerId, setActiveCustomerId } = useAuth();
+  const { profile, activeCustomerId, setActiveCustomerId, firebaseUser } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [locale] = useState(() => getPreferredLocale(['no', 'en']));
+  const [courseCode, setCourseCode] = useState('');
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+  const [redeemMessage, setRedeemMessage] = useState<string | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
+  const autoRedeemRef = useRef(false);
   const t = getTranslation(locale);
 
   const memberships = useMemo(
@@ -42,6 +50,72 @@ export default function MyCoursesPage() {
   const handleSelectCustomer = (customerId: string) => {
     setActiveCustomerId(customerId);
   };
+
+  const redeemCourseCode = useCallback(
+    async (code: string, isAuto = false) => {
+      const normalizedCode = code.trim().toUpperCase();
+      if (!firebaseUser || !normalizedCode) {
+        return;
+      }
+      setRedeeming(true);
+      setRedeemError(null);
+      setRedeemMessage(null);
+      try {
+        const idToken = await firebaseUser.getIdToken();
+        const response = await fetch('/api/course-invite/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: normalizedCode, idToken }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || 'Kunne ikke legge til kurset.');
+        }
+        const data = (await response.json().catch(() => ({}))) as {
+          customerId?: string;
+        };
+        if (data.customerId && data.customerId !== activeCustomerId) {
+          setActiveCustomerId(data.customerId);
+        }
+        setRedeemMessage('Kurset er lagt til.');
+        if (!isAuto) {
+          setCourseCode('');
+        }
+      } catch (err) {
+        console.error('Failed to redeem course code', err);
+        setRedeemError(
+          err instanceof Error ? err.message : 'Kunne ikke legge til kurset.',
+        );
+      } finally {
+        setRedeeming(false);
+      }
+    },
+    [activeCustomerId, firebaseUser, setActiveCustomerId],
+  );
+
+  useEffect(() => {
+    if (!firebaseUser || autoRedeemRef.current) {
+      return;
+    }
+    const codeFromUrl = searchParams.get('code');
+    const storedCode =
+      typeof window !== 'undefined'
+        ? window.sessionStorage.getItem('pendingCourseInviteCode')
+        : null;
+    const code = codeFromUrl || storedCode;
+    if (!code) {
+      return;
+    }
+    autoRedeemRef.current = true;
+    if (storedCode) {
+      window.sessionStorage.removeItem('pendingCourseInviteCode');
+    }
+    setCourseCode(code);
+    redeemCourseCode(code, true);
+    if (codeFromUrl) {
+      router.replace('/my-courses');
+    }
+  }, [firebaseUser, redeemCourseCode, router, searchParams]);
 
   if (!memberships.length) {
     return (
@@ -78,6 +152,38 @@ export default function MyCoursesPage() {
       )}
 
       <section className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">Legg til kurs med kode</h2>
+          <p className="text-sm text-slate-500">
+            Har du fått en kurskode? Skriv den inn her for å få tilgang.
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!courseCode.trim()) return;
+              redeemCourseCode(courseCode.trim().toUpperCase());
+            }}
+            className="mt-4 flex flex-col gap-3 sm:flex-row"
+          >
+            <input
+              type="text"
+              value={courseCode}
+              onChange={(event) => setCourseCode(event.target.value)}
+              placeholder="Kurskode"
+              className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-slate-400 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={redeeming || !courseCode.trim()}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {redeeming ? 'Legger til…' : 'Legg til kurs'}
+            </button>
+          </form>
+          {redeemMessage && <p className="mt-3 text-sm text-emerald-600">{redeemMessage}</p>}
+          {redeemError && <p className="mt-3 text-sm text-red-600">{redeemError}</p>}
+        </div>
+
         <h2 className="text-xl font-semibold text-slate-900">
         {t.courses.courseFrom}{' '}
           {selectedCustomer?.companyName ??

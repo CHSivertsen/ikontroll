@@ -49,6 +49,8 @@ export const translations = {
       startCourse: 'Start kurs',
       noModulesYet: 'Ingen emner tilgjengelig ennå.',
       modulesCompleted: (completed: number, total: number) => `${completed} av ${total} emner fullført`,
+      downloadDiploma: 'Last ned kursbevis',
+      diplomaDownloading: 'Laster ned kursbevis...',
     },
     modules: {
       module: 'Emne',
@@ -131,6 +133,8 @@ export const translations = {
       startCourse: 'Start course',
       noModulesYet: 'No modules available yet.',
       modulesCompleted: (completed: number, total: number) => `${completed} of ${total} modules completed`,
+      downloadDiploma: 'Download certificate',
+      diplomaDownloading: 'Downloading certificate...',
     },
     modules: {
       module: 'Module',
