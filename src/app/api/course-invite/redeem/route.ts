@@ -18,34 +18,34 @@ const normalizeMemberships = (value: unknown): CustomerMembershipRecord[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map((entry) => {
-      if (typeof entry !== 'object' || entry === null) {
-        return null;
-      }
-      const record = entry as {
-        customerId?: unknown;
-        customerName?: unknown;
-        roles?: unknown;
-        assignedCourseIds?: unknown;
-      };
-      if (typeof record.customerId !== 'string') {
-        return null;
-      }
-      const roles = Array.isArray(record.roles)
-        ? record.roles.filter((role): role is string => typeof role === 'string')
-        : [];
-      const assignedCourseIds = Array.isArray(record.assignedCourseIds)
-        ? record.assignedCourseIds.filter((id): id is string => typeof id === 'string')
-        : [];
-      return {
-        customerId: record.customerId,
-        customerName: typeof record.customerName === 'string' ? record.customerName : undefined,
-        roles,
-        assignedCourseIds,
-      };
-    })
-    .filter((entry): entry is CustomerMembershipRecord => entry !== null);
+  const normalized: CustomerMembershipRecord[] = [];
+  value.forEach((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return;
+    }
+    const record = entry as {
+      customerId?: unknown;
+      customerName?: unknown;
+      roles?: unknown;
+      assignedCourseIds?: unknown;
+    };
+    if (typeof record.customerId !== 'string') {
+      return;
+    }
+    const roles = Array.isArray(record.roles)
+      ? record.roles.filter((role): role is string => typeof role === 'string')
+      : [];
+    const assignedCourseIds = Array.isArray(record.assignedCourseIds)
+      ? record.assignedCourseIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    normalized.push({
+      customerId: record.customerId,
+      customerName: typeof record.customerName === 'string' ? record.customerName : undefined,
+      roles,
+      assignedCourseIds,
+    });
+  });
+  return normalized;
 };
 
 const ensureUserRole = (roles: string[]) => {

@@ -33,6 +33,7 @@ interface CompanyUserPayload {
   userId?: string;
   authUid?: string;
   user?: UserPayloadBody;
+  password?: string;
 }
 
 const validateBasePayload = (
@@ -49,6 +50,7 @@ const normalizeMemberships = (value: unknown) => {
   if (!Array.isArray(value)) {
     return [] as {
       customerId: string;
+      customerName?: string;
       roles: CompanyUserRole[];
       assignedCourseIds: string[];
     }[];
@@ -61,10 +63,11 @@ const normalizeMemberships = (value: unknown) => {
         'customerId' in entry &&
         'roles' in entry
       ) {
-        const { customerId, roles, assignedCourseIds } = entry as {
+        const { customerId, roles, assignedCourseIds, customerName } = entry as {
           customerId?: unknown;
           roles?: unknown;
           assignedCourseIds?: unknown;
+          customerName?: unknown;
         };
         if (typeof customerId === 'string') {
           const validRoles = Array.isArray(roles)
@@ -78,7 +81,20 @@ const normalizeMemberships = (value: unknown) => {
             ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
             : [];
 
-          return { customerId, roles: validRoles, assignedCourseIds: validAssignedCourseIds };
+          const nextEntry: {
+            customerId: string;
+            customerName?: string;
+            roles: CompanyUserRole[];
+            assignedCourseIds: string[];
+          } = {
+            customerId,
+            roles: validRoles,
+            assignedCourseIds: validAssignedCourseIds,
+          };
+          if (typeof customerName === 'string' && customerName.trim()) {
+            nextEntry.customerName = customerName;
+          }
+          return nextEntry;
         }
       }
       return null;
@@ -88,6 +104,7 @@ const normalizeMemberships = (value: unknown) => {
         membership,
       ): membership is {
         customerId: string;
+        customerName?: string;
         roles: CompanyUserRole[];
         assignedCourseIds: string[];
       } => membership !== null,
@@ -103,11 +120,21 @@ const upsertMembership = (
   }[],
   customerId: string,
   customerName: string | undefined,
-  roles: CompanyUserRole[],
+  roles: CompanyUserRole[] | undefined,
   assignedCourseIds?: string[],
 ) => {
-  const filteredRoles = Array.from(new Set(roles));
-  // Find existing membership to preserve other fields if needed, though we replace completely now
+  const existingMembership = memberships.find(
+    (membership) => membership.customerId === customerId,
+  );
+  const requestedRoles = Array.isArray(roles) ? roles : [];
+  const roleSeed = requestedRoles.length ? requestedRoles : (existingMembership?.roles ?? []);
+  const nextRoles = Array.from(new Set(roleSeed));
+  const nextAssignedCourseIds = Array.isArray(assignedCourseIds)
+    ? assignedCourseIds.filter((id): id is string => typeof id === 'string')
+    : (existingMembership?.assignedCourseIds ?? []);
+  if (nextAssignedCourseIds.length && !nextRoles.includes('user')) {
+    nextRoles.push('user');
+  }
   const filteredMemberships = memberships.filter(
     (membership) => membership.customerId !== customerId,
   );
@@ -119,11 +146,13 @@ const upsertMembership = (
     assignedCourseIds: string[];
   } = {
     customerId,
-    roles: filteredRoles,
-    assignedCourseIds: Array.isArray(assignedCourseIds) ? assignedCourseIds : [],
+    roles: nextRoles,
+    assignedCourseIds: nextAssignedCourseIds,
   };
   if (typeof customerName === 'string' && customerName.trim()) {
     membershipEntry.customerName = customerName;
+  } else if (existingMembership?.customerName) {
+    membershipEntry.customerName = existingMembership.customerName;
   }
   filteredMemberships.push(membershipEntry);
 
@@ -219,7 +248,11 @@ const upsertUserDocument = async ({
 
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as CompanyUserPayload | null;
-  console.log('POST /api/company-users payload', body);
+  const logBody =
+    body && typeof body.password === 'string' && body.password.trim()
+      ? { ...body, password: '[redacted]' }
+      : body;
+  console.log('POST /api/company-users payload', logBody);
   const missing = validateBasePayload(body);
   if (!body?.user) missing.push('user');
 
@@ -236,6 +269,7 @@ export async function POST(request: NextRequest) {
 
   const { companyId, customerId, customerName } = body;
   const user = body.user!;
+  const requestedPassword = typeof body.password === 'string' ? body.password.trim() : '';
 
   try {
     let authUser = null;
@@ -248,7 +282,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!authUser) {
-      const initialPassword = generateTemporaryPassword();
+      const initialPassword = requestedPassword || generateTemporaryPassword();
       authUser = await adminAuth.createUser({
         email: user.email,
         password: initialPassword,
@@ -256,9 +290,13 @@ export async function POST(request: NextRequest) {
         disabled: user.status === 'inactive',
       });
     } else if (user.status === 'inactive' || user.status === 'active') {
-      await adminAuth.updateUser(authUser.uid, {
+      const updatePayload: { disabled: boolean; password?: string } = {
         disabled: user.status === 'inactive',
-      });
+      };
+      if (requestedPassword) {
+        updatePayload.password = requestedPassword;
+      }
+      await adminAuth.updateUser(authUser.uid, updatePayload);
     }
 
     const { addedCourseIds } = await upsertUserDocument({

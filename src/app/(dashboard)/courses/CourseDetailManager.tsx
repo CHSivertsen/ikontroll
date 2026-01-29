@@ -43,6 +43,7 @@ import { useCourseModules } from '@/hooks/useCourseModules';
 import { useCourses } from '@/hooks/useCourses';
 import { db, storage } from '@/lib/firebase';
 import {
+  Course,
   CourseModule,
   CourseModulePayload,
   LocaleModuleMediaMap,

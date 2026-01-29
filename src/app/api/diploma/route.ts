@@ -27,29 +27,29 @@ const normalizeMemberships = (value: unknown): CustomerMembershipRecord[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map((entry) => {
-      if (typeof entry !== 'object' || entry === null) {
-        return null;
-      }
-      const record = entry as {
-        customerId?: unknown;
-        customerName?: unknown;
-        assignedCourseIds?: unknown;
-      };
-      if (typeof record.customerId !== 'string') {
-        return null;
-      }
-      const assignedCourseIds = Array.isArray(record.assignedCourseIds)
-        ? record.assignedCourseIds.filter((id): id is string => typeof id === 'string')
-        : [];
-      return {
-        customerId: record.customerId,
-        customerName: typeof record.customerName === 'string' ? record.customerName : undefined,
-        assignedCourseIds,
-      };
-    })
-    .filter((entry): entry is CustomerMembershipRecord => entry !== null);
+  const normalized: CustomerMembershipRecord[] = [];
+  value.forEach((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return;
+    }
+    const record = entry as {
+      customerId?: unknown;
+      customerName?: unknown;
+      assignedCourseIds?: unknown;
+    };
+    if (typeof record.customerId !== 'string') {
+      return;
+    }
+    const assignedCourseIds = Array.isArray(record.assignedCourseIds)
+      ? record.assignedCourseIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    normalized.push({
+      customerId: record.customerId,
+      customerName: typeof record.customerName === 'string' ? record.customerName : undefined,
+      assignedCourseIds,
+    });
+  });
+  return normalized;
 };
 
 const pickCourseTitle = (value: unknown) => {

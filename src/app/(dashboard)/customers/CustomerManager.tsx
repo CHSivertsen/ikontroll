@@ -5,9 +5,11 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { sendPasswordResetEmail } from 'firebase/auth';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCustomers } from '@/hooks/useCustomers';
+import { auth } from '@/lib/firebase';
 import type { Customer, CustomerPayload } from '@/types/customer';
 
 type BrregSuggestion = {
@@ -69,6 +71,11 @@ const customerSchema = z.object({
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
+type ResetStatus = {
+  type: 'success' | 'error';
+  message: string;
+};
+
 const defaultValues: CustomerFormValues = {
   companyName: '',
   address: '',
@@ -103,6 +110,11 @@ export default function CustomerManager() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetStatus, setResetStatus] = useState<ResetStatus | null>(null);
+  const [expandedCustomerIds, setExpandedCustomerIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [suggestions, setSuggestions] = useState<BrregSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
@@ -239,6 +251,7 @@ export default function CustomerManager() {
     form.reset(defaultValues);
     setIsFormOpen(true);
     setFormError(null);
+    setResetStatus(null);
     setSuggestions([]);
     setShowSuggestions(false);
   };
@@ -288,6 +301,7 @@ export default function CustomerManager() {
       });
       setIsFormOpen(true);
       setFormError(null);
+      setResetStatus(null);
       setSuggestions([]);
       setShowSuggestions(false);
     },
@@ -299,9 +313,44 @@ export default function CustomerManager() {
     setIsFormOpen(false);
     setEditingCustomer(null);
     setFormError(null);
+    setResetStatus(null);
     setSuggestions([]);
     setShowSuggestions(false);
   };
+
+  const handleSendResetPassword = useCallback(async () => {
+    const email = form.getValues('contactEmail')?.trim();
+    if (!email) {
+      setResetStatus({ type: 'error', message: 'Kontakt-e-post mangler.' });
+      return;
+    }
+    try {
+      setResetBusy(true);
+      setResetStatus(null);
+      await sendPasswordResetEmail(auth, email);
+      setResetStatus({
+        type: 'success',
+        message: 'Sendte lenke for å tilbakestille passord.',
+      });
+    } catch (err) {
+      console.error('Failed to send reset password email', err);
+      const code =
+        typeof err === 'object' && err && 'code' in err
+          ? (err as { code?: string }).code
+          : null;
+      const message =
+        code === 'auth/user-not-found'
+          ? 'Fant ingen bruker med den e-posten.'
+          : code === 'auth/invalid-email'
+            ? 'Ugyldig e-postadresse.'
+            : code === 'auth/too-many-requests'
+              ? 'For mange forespørsler. Prøv igjen senere.'
+              : 'Kunne ikke sende tilbakestillingslenke.';
+      setResetStatus({ type: 'error', message });
+    } finally {
+      setResetBusy(false);
+    }
+  }, [form]);
 
   const onSubmit = async (values: CustomerFormValues) => {
     const { contactPassword, ...customerValues } = values;
@@ -346,6 +395,53 @@ export default function CustomerManager() {
     }
   };
 
+  const toggleExpanded = useCallback((customerId: string) => {
+    setExpandedCustomerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(customerId)) {
+        next.delete(customerId);
+      } else {
+        next.add(customerId);
+      }
+      return next;
+    });
+  }, []);
+
+  const customerChildrenMap = useMemo(() => {
+    const map = new Map<string, Customer[]>();
+    customers.forEach((customer) => {
+      if (!customer.parentCustomerId) return;
+      const current = map.get(customer.parentCustomerId) ?? [];
+      current.push(customer);
+      map.set(customer.parentCustomerId, current);
+    });
+    map.forEach((list) =>
+      list.sort((a, b) => a.companyName.localeCompare(b.companyName)),
+    );
+    return map;
+  }, [customers]);
+
+  const topLevelCustomers = useMemo(() => {
+    const ids = new Set(customers.map((customer) => customer.id));
+    const roots = customers.filter(
+      (customer) => !customer.parentCustomerId || !ids.has(customer.parentCustomerId),
+    );
+    return [...roots].sort((a, b) => a.companyName.localeCompare(b.companyName));
+  }, [customers]);
+
+  const expandableCustomerIds = useMemo(
+    () => Array.from(customerChildrenMap.keys()),
+    [customerChildrenMap],
+  );
+
+  const handleExpandAll = useCallback(() => {
+    setExpandedCustomerIds(new Set(expandableCustomerIds));
+  }, [expandableCustomerIds]);
+
+  const handleCollapseAll = useCallback(() => {
+    setExpandedCustomerIds(new Set());
+  }, []);
+
   const handleDelete = useCallback(
     async (customer: Customer) => {
       const confirmed = window.confirm(
@@ -374,86 +470,132 @@ export default function CustomerManager() {
       );
     }
 
-    return customers.map((customer) => (
-      <tr
-        key={customer.id}
-        className="border-b border-slate-100 text-sm last:border-none"
-      >
-        <td className="py-3">
-          <div>
-            <p className="font-semibold text-slate-900">
-              {customer.companyName}
-            </p>
-            <p className="text-xs text-slate-500">
-              {customer.address}, {customer.zipno} {customer.place}
-            </p>
-          </div>
-        </td>
-        <td className="py-3">
-          <div>
-            <p className="text-sm font-medium text-slate-800">
-              {customer.contactPerson}
-            </p>
-            <p className="text-xs text-slate-500">{customer.contactEmail}</p>
-            <p className="text-xs text-slate-500">{customer.contactPhone}</p>
-          </div>
-        </td>
-        <td className="py-3">
-          <div className="flex flex-col gap-1">
-            <span
-              className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-medium ${statusBadges[customer.status]}`}
-            >
-              {customer.status === 'active' ? 'Aktiv' : 'Inaktiv'}
-            </span>
-            {customer.allowSubunits && (
-              <span className="text-xs font-semibold text-emerald-600">
-                Underenheter
-              </span>
-            )}
-          </div>
-        </td>
-        <td className="py-3 text-sm text-slate-600">{customer.vatNumber}</td>
-        <td className="py-3 text-right">
-          <div className="flex flex-wrap justify-end gap-2">
-            <Link
-              href={`/customers/${customer.id}`}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              aria-label="Administrer brukere"
-            >
-              <span className="text-xs font-semibold">🎓</span>
-            </Link>
-            <button
-              onClick={() => openEdit(customer)}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              aria-label="Rediger kunde"
-            >
-              <span className="text-xs font-semibold">✏️</span>
-            </button>
-            <button
-              onClick={() => handleDelete(customer)}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition hover:border-red-300 hover:bg-red-50"
-              aria-label="Slett kunde"
-            >
-              <svg
-                className="h-4 w-4"
-                viewBox="0 0 20 20"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
+    const renderRows = (customer: Customer, depth: number): React.ReactNode[] => {
+      const children = customerChildrenMap.get(customer.id) ?? [];
+      const hasChildren = children.length > 0;
+      const isExpanded = expandedCustomerIds.has(customer.id);
+
+      const row = (
+        <tr
+          key={customer.id}
+          className="border-b border-slate-100 text-sm last:border-none"
+        >
+          <td className="py-3">
+            <div className="flex items-start gap-2" style={{ paddingLeft: depth * 24 }}>
+              <div className="flex h-6 w-6 items-center justify-center">
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(customer.id)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    aria-label={
+                      isExpanded
+                        ? `Skjul underenheter for ${customer.companyName}`
+                        : `Vis underenheter for ${customer.companyName}`
+                    }
+                  >
+                    {isExpanded ? '▾' : '▸'}
+                  </button>
+                ) : (
+                  <span className="inline-block h-6 w-6" />
+                )}
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">
+                  {customer.companyName}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {customer.address}, {customer.zipno} {customer.place}
+                </p>
+                {customer.parentCustomerId && (
+                  <p className="text-xs font-semibold text-slate-400">Underenhet</p>
+                )}
+              </div>
+            </div>
+          </td>
+          <td className="py-3">
+            <div>
+              <p className="text-sm font-medium text-slate-800">
+                {customer.contactPerson}
+              </p>
+              <p className="text-xs text-slate-500">{customer.contactEmail}</p>
+              <p className="text-xs text-slate-500">{customer.contactPhone}</p>
+            </div>
+          </td>
+          <td className="py-3">
+            <div className="flex flex-col gap-1">
+              <span
+                className={`inline-flex w-fit rounded-full px-2 py-1 text-xs font-medium ${statusBadges[customer.status]}`}
               >
-                <path
-                  d="M15 5 5 15M5 5l10 10"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </td>
-      </tr>
-    ));
-  }, [customers, openEdit, handleDelete]);
+                {customer.status === 'active' ? 'Aktiv' : 'Inaktiv'}
+              </span>
+              {customer.allowSubunits && (
+                <span className="text-xs font-semibold text-emerald-600">
+                  Underenheter
+                </span>
+              )}
+            </div>
+          </td>
+          <td className="py-3 text-sm text-slate-600">{customer.vatNumber}</td>
+          <td className="py-3 text-right">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Link
+                href={`/customers/${customer.id}`}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                aria-label="Administrer brukere"
+              >
+                <span className="text-xs font-semibold">🎓</span>
+              </Link>
+              <button
+                onClick={() => openEdit(customer)}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                aria-label="Rediger kunde"
+              >
+                <span className="text-xs font-semibold">✏️</span>
+              </button>
+              <button
+                onClick={() => handleDelete(customer)}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-600 transition hover:border-red-300 hover:bg-red-50"
+                aria-label="Slett kunde"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M15 5 5 15M5 5l10 10"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+
+      if (!hasChildren || !isExpanded) {
+        return [row];
+      }
+
+      const childRows = children.flatMap((child) => renderRows(child, depth + 1));
+      return [row, ...childRows];
+    };
+
+    return topLevelCustomers.flatMap((customer) => renderRows(customer, 0));
+  }, [
+    customers,
+    customerChildrenMap,
+    expandedCustomerIds,
+    handleDelete,
+    openEdit,
+    toggleExpanded,
+    topLevelCustomers,
+  ]);
 
   if (!companyId) {
     return (
@@ -473,12 +615,30 @@ export default function CustomerManager() {
               Hold oversikt over alle kunder tilknyttet selskapet.
             </p>
           </div>
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            + Ny kunde
-          </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleExpandAll}
+                className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                disabled={!expandableCustomerIds.length}
+              >
+                Utvid alle
+              </button>
+              <button
+                type="button"
+                onClick={handleCollapseAll}
+                className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                disabled={!expandableCustomerIds.length}
+              >
+                Minimer alle
+              </button>
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                + Ny kunde
+              </button>
+            </div>
         </div>
 
         {error && (
@@ -710,6 +870,31 @@ export default function CustomerManager() {
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   />
                 </Field>
+                {editingCustomer && (
+                  <div className="md:col-span-2 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSendResetPassword}
+                      className="w-fit rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-70"
+                      disabled={busy || resetBusy}
+                    >
+                      {resetBusy
+                        ? 'Sender lenke …'
+                        : 'Send lenke for nytt passord'}
+                    </button>
+                    {resetStatus && (
+                      <p
+                        className={`text-sm ${
+                          resetStatus.type === 'success'
+                            ? 'text-emerald-600'
+                            : 'text-red-600'
+                        }`}
+                      >
+                        {resetStatus.message}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {!editingCustomer && (
                   <Field
                     label="Passord for kontaktperson"

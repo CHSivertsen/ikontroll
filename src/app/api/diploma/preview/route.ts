@@ -26,32 +26,33 @@ const normalizeCompanies = (value: unknown): CompanyMembership[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map((entry) => {
-      if (typeof entry === 'string') {
-        return { companyId: entry, roles: [] };
-      }
-      if (typeof entry !== 'object' || entry === null) {
-        return null;
-      }
-      const record = entry as {
-        companyId?: unknown;
-        roles?: unknown;
-        displayName?: unknown;
-      };
-      if (typeof record.companyId !== 'string') {
-        return null;
-      }
-      const roles = Array.isArray(record.roles)
-        ? record.roles.filter((role): role is string => typeof role === 'string')
-        : [];
-      return {
-        companyId: record.companyId,
-        roles,
-        displayName: typeof record.displayName === 'string' ? record.displayName : undefined,
-      };
-    })
-    .filter((entry): entry is CompanyMembership => entry !== null);
+  const normalized: CompanyMembership[] = [];
+  value.forEach((entry) => {
+    if (typeof entry === 'string') {
+      normalized.push({ companyId: entry, roles: [] });
+      return;
+    }
+    if (typeof entry !== 'object' || entry === null) {
+      return;
+    }
+    const record = entry as {
+      companyId?: unknown;
+      roles?: unknown;
+      displayName?: unknown;
+    };
+    if (typeof record.companyId !== 'string') {
+      return;
+    }
+    const roles = Array.isArray(record.roles)
+      ? record.roles.filter((role): role is string => typeof role === 'string')
+      : [];
+    normalized.push({
+      companyId: record.companyId,
+      roles,
+      displayName: typeof record.displayName === 'string' ? record.displayName : undefined,
+    });
+  });
+  return normalized;
 };
 
 const resolveText = (value: unknown, fallback: string) => {

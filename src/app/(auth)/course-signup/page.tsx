@@ -2,14 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { signInWithCustomToken } from 'firebase/auth';
 
 import { auth } from '@/lib/firebase';
 
 export default function CourseSignupPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [code, setCode] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -18,11 +17,15 @@ export default function CourseSignupPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const codeParam = searchParams.get('code');
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const codeParam = params.get('code');
     if (codeParam) {
       setCode(codeParam);
     }
-  }, [searchParams]);
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();

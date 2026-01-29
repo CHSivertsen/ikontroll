@@ -65,6 +65,12 @@ const customerSchema = z.object({
   contactPerson: z.string().min(2, 'Kontaktperson må fylles ut'),
   contactPhone: optionalPhone,
   contactEmail: z.string().email('Ugyldig e-postadresse'),
+  contactPassword: z
+    .preprocess(
+      (val) => (typeof val === 'string' ? val.trim() : undefined),
+      passwordSchema,
+    )
+    .optional(),
   courseIds: z
     .array(z.string())
     .min(1, 'Velg minst ett kurs')
@@ -84,6 +90,7 @@ const defaultValues: CustomerFormValues = {
   contactPerson: '',
   contactPhone: '',
   contactEmail: '',
+  contactPassword: '',
   courseIds: [],
 };
 
@@ -214,9 +221,13 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
   const companyNameValue = form.watch('companyName');
 
   const createContactAdminUser = useCallback(
-    async (customerId: string, values: CustomerFormValues) => {
+    async (customerId: string, password: string, values: CustomerFormValues) => {
       if (!ownerCompanyId) {
         throw new Error('Systemeier mangler på kunden.');
+      }
+      const trimmedPassword = password.trim();
+      if (!trimmedPassword) {
+        throw new Error('Passord for kontaktperson må fylles ut.');
       }
       const { firstName, lastName } = splitContactName(values.contactPerson);
       const normalizedPhone = ensureNorwegianPhone(values.contactPhone);
@@ -235,6 +246,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
             roles: ['admin'],
             status: 'active',
           },
+          password: trimmedPassword,
         }),
       });
       if (!response.ok) {
@@ -403,7 +415,7 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
 
   const onSubmit = async (values: CustomerFormValues) => {
     if (!customer.id) return;
-    const customerValues = values;
+    const { contactPassword, ...customerValues } = values;
     try {
       setBusy(true);
       setFormError(null);
@@ -425,10 +437,15 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
           setBusy(false);
           return;
         }
+        if (!contactPassword?.trim()) {
+          setFormError('Kontaktpersonens passord må fylles ut.');
+          setBusy(false);
+          return;
+        }
         let createdCustomerId: string | null = null;
         try {
           createdCustomerId = await createSubunit(payload);
-          await createContactAdminUser(createdCustomerId, values);
+          await createContactAdminUser(createdCustomerId, contactPassword, values);
         } catch (err) {
           if (createdCustomerId) {
             await deleteSubunit(createdCustomerId).catch((deleteErr) =>
@@ -783,6 +800,18 @@ const SubunitManager = ({ customer }: { customer: Customer }) => {
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   />
                 </Field>
+                {!editingCustomer && (
+                  <Field
+                    label="Passord for kontaktperson"
+                    error={form.formState.errors.contactPassword?.message}
+                  >
+                    <input
+                      type="text"
+                      {...form.register('contactPassword')}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </Field>
+                )}
 
                 <div className="md:col-span-2">
                   <Field
