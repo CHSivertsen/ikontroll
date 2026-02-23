@@ -1,9 +1,11 @@
 export type CourseStatus = 'active' | 'inactive';
+export type CourseExpirationType = 'none' | 'days' | 'months' | 'date';
 
 export type LocaleStringMap = Record<string, string>;
 export type LocaleStringArrayMap = Record<string, string[]>;
 
 export type ModuleMediaType = 'image' | 'video' | 'document';
+export type CourseModuleType = 'normal' | 'exam';
 
 export interface ModuleMediaItem {
   id: string;
@@ -21,6 +23,10 @@ export interface Course {
   description: LocaleStringMap;
   courseImageUrl?: string | null;
   status: CourseStatus;
+  expirationType?: CourseExpirationType;
+  expirationDays?: number | null;
+  expirationMonths?: number | null;
+  expirationDate?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -35,7 +41,8 @@ export interface CourseQuestion {
   title: LocaleStringMap;
   contentText: LocaleStringMap;
   alternatives: CourseQuestionAlternative[];
-  correctAnswerId: string;
+  correctAnswerIds: string[];
+  correctAnswerId?: string;
 }
 
 export interface CourseModule {
@@ -49,6 +56,8 @@ export interface CourseModule {
   imageUrls: LocaleStringArrayMap;
   order: number;
   questions: CourseQuestion[];
+  moduleType?: CourseModuleType;
+  examPassPercentage?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }

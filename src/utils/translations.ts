@@ -61,6 +61,10 @@ export const translations = {
       question: 'Spørsmål',
       summary: 'Oppsummering',
       result: (correct: number, total: number, percent: number) => `Du fikk ${correct} av ${total} riktige (${percent}%).`,
+      examPassRequirement: (percent: number) => `Beståelseskrav: ${percent}% riktige svar.`,
+      examPassed: 'Du bestod eksamen.',
+      examFailed: (percent: number) =>
+        `Du bestod ikke eksamen. Du trenger minst ${percent}% riktige svar.`,
       reviewQuestions: 'Spørsmål du bør se gjennom igjen:',
       yourAnswer: 'Ditt svar:',
       correctAnswer: 'Riktig svar:',
@@ -145,6 +149,10 @@ export const translations = {
       question: 'Question',
       summary: 'Summary',
       result: (correct: number, total: number, percent: number) => `You got ${correct} of ${total} correct (${percent}%).`,
+      examPassRequirement: (percent: number) => `Pass requirement: ${percent}% correct.`,
+      examPassed: 'You passed the exam.',
+      examFailed: (percent: number) =>
+        `You did not pass the exam. You need at least ${percent}% correct.`,
       reviewQuestions: 'Questions to review:',
       yourAnswer: 'Your answer:',
       correctAnswer: 'Correct answer:',
@@ -171,7 +179,9 @@ export const translations = {
   },
 };
 
-export const getTranslation = (locale: string) => {
+export type Translation = typeof translations.no;
+
+export const getTranslation = (locale: string): Translation => {
   const lang = (locale.slice(0, 2).toLowerCase() === 'en' ? 'en' : 'no') as Locale;
   return translations[lang];
 };

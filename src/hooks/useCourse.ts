@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
-import type { Course, LocaleStringMap } from '@/types/course';
+import type { Course, CourseExpirationType, LocaleStringMap } from '@/types/course';
 
 const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
   if (!value) {
@@ -18,6 +18,15 @@ const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
   }
   return { no: String(value) };
 };
+
+const normalizeExpirationType = (value: unknown): CourseExpirationType =>
+  value === 'days' || value === 'months' || value === 'date' ? value : 'none';
+
+const normalizeNumber = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const normalizeDate = (value: unknown) =>
+  typeof value === 'string' && value.trim() ? value : undefined;
 
 interface UseCourseState {
   course: Course | null;
@@ -55,6 +64,10 @@ export const useCourse = (courseId: string | null): UseCourseState => {
             description: normalizeLocaleMap(data.description),
             courseImageUrl: data.courseImageUrl ?? null,
             status: data.status ?? 'inactive',
+            expirationType: normalizeExpirationType(data.expirationType),
+            expirationDays: normalizeNumber(data.expirationDays),
+            expirationMonths: normalizeNumber(data.expirationMonths),
+            expirationDate: normalizeDate(data.expirationDate),
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           });

@@ -46,12 +46,16 @@ import {
   Course,
   CourseModule,
   CourseModulePayload,
+  CourseQuestion,
   LocaleModuleMediaMap,
   LocaleStringArrayMap,
   LocaleStringMap,
 } from '@/types/course';
 
 const DEFAULT_LANGUAGES = ['no', 'en'];
+const DEFAULT_EXAM_PASS_PERCENTAGE = 80;
+const EXAM_REPRESENTATIVE_SHARE = 0.3;
+const EXAM_MAX_QUESTIONS = 30;
 
 type CourseInfoFormValues = {
   title: LocaleStringMap;
@@ -59,11 +63,17 @@ type CourseInfoFormValues = {
   courseImageUrl?: string | null;
   courseImageFile?: FileList;
   status: 'active' | 'inactive';
+  expirationType: 'none' | 'days' | 'months' | 'date';
+  expirationAmount?: number;
+  expirationDate?: string;
 };
 
 type ModuleQuickCreateFormValues = {
   title: string;
   description: string;
+  moduleType: 'normal' | 'exam';
+  examImportMode: 'all' | 'representative' | 'blank';
+  examPassPercentage: number;
 };
 
 type DuplicateModuleFormValues = {
@@ -118,6 +128,8 @@ const createEmptyLocaleMediaMap = (languages: string[]): LocaleModuleMediaMap =>
     return acc;
   }, {});
 
+const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
+
 const SortableModuleItem = ({
   module,
   activeLanguage,
@@ -135,6 +147,7 @@ const SortableModuleItem = ({
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: module.id });
+  const isExamModule = module.moduleType === 'exam';
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -195,6 +208,14 @@ const SortableModuleItem = ({
                 <p className="text-xs text-slate-500">
                   {module.questions.length} kontrollspørsmål
                 </p>
+                {isExamModule && (
+                  <p className="text-xs font-semibold text-indigo-600">
+                    Eksamen
+                    {typeof module.examPassPercentage === 'number'
+                      ? ` · Krav ${module.examPassPercentage}%`
+                      : ''}
+                  </p>
+                )}
               </div>
               <div className="mt-1 text-slate-500">
                 <svg
@@ -264,6 +285,55 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const [duplicateTarget, setDuplicateTarget] = useState<CourseModule | null>(null);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [duplicating, setDuplicating] = useState(false);
+
+  const importableModules = useMemo(
+    () =>
+      modules.filter(
+        (module) =>
+          (module.moduleType ?? 'normal') !== 'exam' &&
+          (module.questions?.length ?? 0) > 0,
+      ),
+    [modules],
+  );
+  const importableQuestionCount = useMemo(
+    () =>
+      importableModules.reduce(
+        (sum, module) => sum + (module.questions?.length ?? 0),
+        0,
+      ),
+    [importableModules],
+  );
+  const importableQuestions = useMemo(
+    () => importableModules.flatMap((module) => module.questions ?? []),
+    [importableModules],
+  );
+  const buildRepresentativeQuestions = useCallback((): CourseQuestion[] => {
+    if (!importableModules.length) {
+      return [];
+    }
+    const moduleQueues = importableModules.map((module) => [
+      ...(module.questions ?? []),
+    ]);
+    const totalQuestions = moduleQueues.reduce((sum, queue) => sum + queue.length, 0);
+    const targetCount = Math.min(
+      EXAM_MAX_QUESTIONS,
+      Math.max(
+        importableModules.length,
+        Math.round(totalQuestions * EXAM_REPRESENTATIVE_SHARE),
+      ),
+    );
+    const selected: CourseQuestion[] = [];
+    let cursor = 0;
+    while (selected.length < targetCount && moduleQueues.some((queue) => queue.length)) {
+      const moduleIndex = cursor % moduleQueues.length;
+      const queue = moduleQueues[moduleIndex];
+      if (queue.length) {
+        selected.push(queue.shift()!);
+      }
+      cursor += 1;
+    }
+    return selected;
+  }, [importableModules]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -336,12 +406,32 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     [router, courseId],
   );
 
+  const resolveExpirationDefaults = (source: Course | null | undefined) => {
+    const expirationType = source?.expirationType ?? 'none';
+    const normalizeAmount = (value: number | null | undefined) =>
+      typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    const expirationAmount =
+      expirationType === 'days'
+        ? normalizeAmount(source?.expirationDays)
+        : expirationType === 'months'
+          ? normalizeAmount(source?.expirationMonths)
+          : undefined;
+    const expirationDate =
+      expirationType === 'date' ? source?.expirationDate ?? '' : '';
+    return {
+      expirationType,
+      expirationAmount,
+      expirationDate,
+    };
+  };
+
   const form = useForm<CourseInfoFormValues>({
     defaultValues: {
       title: course?.title ?? { no: '' },
       description: course?.description ?? { no: '' },
       courseImageUrl: course?.courseImageUrl ?? null,
       status: course?.status ?? 'inactive',
+      ...resolveExpirationDefaults(course),
     },
   });
 
@@ -371,6 +461,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
       description: course.description ?? { no: '' },
       courseImageUrl: course.courseImageUrl ?? null,
       status: course.status,
+      ...resolveExpirationDefaults(course),
     });
     setCourseImageUrl(course.courseImageUrl ?? null);
   }, [course, form]);
@@ -381,6 +472,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const [languageInput, setLanguageInput] = useState('');
   const languageInputRef = useRef<HTMLInputElement | null>(null);
   const statusValue = form.watch('status') ?? 'inactive';
+  const expirationType = form.watch('expirationType') ?? 'none';
   const [courseImageUrl, setCourseImageUrl] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -472,6 +564,9 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
   const handleQuickCreateModule = async ({
     title,
     description,
+    moduleType,
+    examImportMode,
+    examPassPercentage,
   }: ModuleQuickCreateFormValues): Promise<boolean> => {
     const trimmedTitle = title.trim();
     const trimmedDescription = description.trim();
@@ -483,6 +578,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
     try {
       setQuickCreateSaving(true);
       setQuickCreateError(null);
+      const isExamModule = moduleType === 'exam';
       const nextOrder =
         moduleItems.length > 0
           ? (moduleItems[moduleItems.length - 1].order ?? moduleItems.length) + 1
@@ -501,6 +597,29 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
       const imageMap = createEmptyLocaleArrayMap(targetLanguages);
       const mediaMap = createEmptyLocaleMediaMap(targetLanguages);
 
+      let questions: CourseQuestion[] = [];
+      if (isExamModule) {
+        if (examImportMode === 'all') {
+          if (!importableQuestionCount) {
+            setQuickCreateError('Det finnes ingen spørsmål å importere.');
+            return false;
+          }
+          questions = importableQuestions;
+        } else if (examImportMode === 'representative') {
+          if (!importableQuestionCount) {
+            setQuickCreateError('Det finnes ingen spørsmål å importere.');
+            return false;
+          }
+          questions = buildRepresentativeQuestions();
+        }
+      }
+
+      const sanitizedPassPercentage = clampPercentage(
+        Number.isFinite(examPassPercentage)
+          ? Math.round(examPassPercentage)
+          : DEFAULT_EXAM_PASS_PERCENTAGE,
+      );
+
       const payload: CourseModulePayload = {
         title: titleMap,
         summary: summaryMap,
@@ -509,7 +628,9 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
         videoUrls: videoMap,
         imageUrls: imageMap,
         order: nextOrder,
-        questions: [],
+        questions,
+        moduleType: isExamModule ? 'exam' : 'normal',
+        ...(isExamModule ? { examPassPercentage: sanitizedPassPercentage } : {}),
       };
 
       const newModuleId = await createModule(payload);
@@ -595,6 +716,11 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
         imageUrls: duplicateTarget.imageUrls ?? {},
         order: maxOrder + 1,
         questions: duplicateTarget.questions ?? [],
+        moduleType: duplicateTarget.moduleType ?? 'normal',
+        ...(duplicateTarget.moduleType === 'exam' &&
+        typeof duplicateTarget.examPassPercentage === 'number'
+          ? { examPassPercentage: duplicateTarget.examPassPercentage }
+          : {}),
       };
 
       await addDoc(collection(db, 'courses', destinationCourseId, 'modules'), {
@@ -662,11 +788,46 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
       normalizedTitle.no = normalizedTitle.no?.trim() ?? '';
       const normalizedDescription = normalizeForSave(values.description ?? {});
       normalizedDescription.no = normalizedDescription.no?.trim() ?? '';
+      const expirationTypeValue = values.expirationType ?? 'none';
+      const expirationAmount =
+        typeof values.expirationAmount === 'number' && Number.isFinite(values.expirationAmount)
+          ? Math.max(1, Math.round(values.expirationAmount))
+          : null;
+      const expirationDate = values.expirationDate?.trim() || null;
+      const expirationPayload =
+        expirationTypeValue === 'days'
+          ? {
+              expirationType: expirationTypeValue,
+              expirationDays: expirationAmount,
+              expirationMonths: null,
+              expirationDate: null,
+            }
+          : expirationTypeValue === 'months'
+            ? {
+                expirationType: expirationTypeValue,
+                expirationDays: null,
+                expirationMonths: expirationAmount,
+                expirationDate: null,
+              }
+            : expirationTypeValue === 'date'
+              ? {
+                  expirationType: expirationTypeValue,
+                  expirationDays: null,
+                  expirationMonths: null,
+                  expirationDate,
+                }
+              : {
+                  expirationType: 'none',
+                  expirationDays: null,
+                  expirationMonths: null,
+                  expirationDate: null,
+                };
       await updateDoc(doc(db, 'courses', course.id), {
         title: normalizedTitle,
         description: normalizedDescription,
         courseImageUrl: courseImageUrl ?? null,
         status: values.status,
+        ...expirationPayload,
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
@@ -850,7 +1011,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
             id="course-status-select"
             value={statusValue}
             onChange={handleStatusChange}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-sans text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           >
             <option value="active">Aktiv</option>
             <option value="inactive">Inaktiv</option>
@@ -932,6 +1093,75 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
               )}
             />
           </label>
+
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">Utløp</p>
+            <div className="mt-3 flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+                Type
+                <select
+                  {...form.register('expirationType')}
+                  className="w-fit min-w-[12rem] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-sans text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="none">Ingen utløp</option>
+                  <option value="days">Antall dager</option>
+                  <option value="months">Antall måneder</option>
+                  <option value="date">Dato</option>
+                </select>
+              </label>
+
+              {(expirationType === 'days' || expirationType === 'months') && (
+                <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+                  {expirationType === 'days' ? 'Dager' : 'Måneder'}
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    {...form.register('expirationAmount', {
+                      valueAsNumber: true,
+                      validate: (value) =>
+                        expirationType === 'days' || expirationType === 'months'
+                          ? typeof value === 'number' &&
+                            Number.isFinite(value) &&
+                            value > 0
+                            ? true
+                            : 'Angi et gyldig antall.'
+                          : true,
+                    })}
+                    className="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm font-sans text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                  {form.formState.errors.expirationAmount?.message && (
+                    <span className="text-xs font-semibold text-red-600">
+                      {form.formState.errors.expirationAmount.message}
+                    </span>
+                  )}
+                </label>
+              )}
+
+              {expirationType === 'date' && (
+                <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+                  Dato
+                  <input
+                    type="date"
+                    {...form.register('expirationDate', {
+                      validate: (value) =>
+                        expirationType === 'date'
+                          ? value?.trim()
+                            ? true
+                            : 'Velg en dato.'
+                          : true,
+                    })}
+                    className="w-48 rounded-xl border border-slate-200 px-3 py-2 text-sm font-sans text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                  {form.formState.errors.expirationDate?.message && (
+                    <span className="text-xs font-semibold text-red-600">
+                      {form.formState.errors.expirationDate.message}
+                    </span>
+                  )}
+                </label>
+              )}
+            </div>
+          </div>
 
           <div className="md:col-span-2 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex items-center justify-between">
@@ -1047,6 +1277,7 @@ export default function CourseDetailManager({ courseId }: { courseId: string }) 
           onSubmit={handleQuickCreateModule}
           loading={quickCreateSaving}
           errorMessage={quickCreateError}
+          importableQuestionCount={importableQuestionCount}
         />
       )}
       {duplicateTarget && (
@@ -1070,15 +1301,35 @@ const ModuleQuickCreateModal = ({
   onSubmit,
   loading,
   errorMessage,
+  importableQuestionCount,
 }: {
   onClose: () => void;
   onSubmit: (values: ModuleQuickCreateFormValues) => Promise<boolean>;
   loading: boolean;
   errorMessage: string | null;
+  importableQuestionCount: number;
 }) => {
   const form = useForm<ModuleQuickCreateFormValues>({
-    defaultValues: { title: '', description: '' },
+    defaultValues: {
+      title: '',
+      description: '',
+      moduleType: 'normal',
+      examImportMode: 'representative',
+      examPassPercentage: DEFAULT_EXAM_PASS_PERCENTAGE,
+    },
   });
+  const moduleType = form.watch('moduleType');
+  const examImportMode = form.watch('examImportMode');
+
+  useEffect(() => {
+    if (
+      moduleType === 'exam' &&
+      importableQuestionCount === 0 &&
+      examImportMode !== 'blank'
+    ) {
+      form.setValue('examImportMode', 'blank', { shouldDirty: true });
+    }
+  }, [examImportMode, form, importableQuestionCount, moduleType]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     const success = await onSubmit(values);
@@ -1146,6 +1397,96 @@ const ModuleQuickCreateModal = ({
               disabled={loading}
             />
           </label>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700">Modultype</p>
+            <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+              <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <input
+                  type="radio"
+                  value="normal"
+                  {...form.register('moduleType')}
+                  disabled={loading}
+                />
+                Vanlig modul
+              </label>
+              <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <input
+                  type="radio"
+                  value="exam"
+                  {...form.register('moduleType')}
+                  disabled={loading}
+                />
+                Eksamen
+              </label>
+            </div>
+          </div>
+
+          {moduleType === 'exam' && (
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-700">Eksamensoppsett</p>
+                <p className="text-xs text-slate-500">
+                  Tilgjengelige spørsmål: {importableQuestionCount}
+                </p>
+              </div>
+              <div className="grid gap-2 text-sm text-slate-700">
+                <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <input
+                    type="radio"
+                    value="all"
+                    {...form.register('examImportMode')}
+                    disabled={loading || importableQuestionCount === 0}
+                  />
+                  Importer alle spørsmål
+                </label>
+                <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <input
+                    type="radio"
+                    value="representative"
+                    {...form.register('examImportMode')}
+                    disabled={loading || importableQuestionCount === 0}
+                  />
+                  Importer representativt utvalg
+                </label>
+                <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <input
+                    type="radio"
+                    value="blank"
+                    {...form.register('examImportMode')}
+                    disabled={loading}
+                  />
+                  Start med tom eksamen
+                </label>
+              </div>
+              {importableQuestionCount === 0 && (
+                <p className="text-xs text-amber-600">
+                  Det finnes ingen spørsmål å importere i dette kurset.
+                </p>
+              )}
+              <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+                <span>Beståelseskrav (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  {...form.register('examPassPercentage', {
+                    valueAsNumber: true,
+                    min: { value: 0, message: 'Må være mellom 0 og 100.' },
+                    max: { value: 100, message: 'Må være mellom 0 og 100.' },
+                  })}
+                  className="w-32 rounded-xl border border-slate-200 px-3 py-2 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  disabled={loading}
+                />
+                {form.formState.errors.examPassPercentage?.message && (
+                  <p className="text-xs font-semibold text-red-600">
+                    {form.formState.errors.examPassPercentage.message}
+                  </p>
+                )}
+              </label>
+            </div>
+          )}
 
           {errorMessage && (
             <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">

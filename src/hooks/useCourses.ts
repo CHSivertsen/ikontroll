@@ -15,7 +15,12 @@ import {
 } from 'firebase/firestore';
 
 import { db } from '@/lib/firebase';
-import type { Course, CoursePayload, LocaleStringMap } from '@/types/course';
+import type {
+  Course,
+  CourseExpirationType,
+  CoursePayload,
+  LocaleStringMap,
+} from '@/types/course';
 const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
   if (!value) {
     return { no: '' };
@@ -28,6 +33,15 @@ const normalizeLocaleMap = (value: unknown): LocaleStringMap => {
   }
   return { no: String(value) };
 };
+
+const normalizeExpirationType = (value: unknown): CourseExpirationType =>
+  value === 'days' || value === 'months' || value === 'date' ? value : 'none';
+
+const normalizeNumber = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const normalizeDate = (value: unknown) =>
+  typeof value === 'string' && value.trim() ? value : undefined;
 
 interface UseCoursesState {
   courses: Course[];
@@ -75,6 +89,10 @@ export const useCourses = (
             title: normalizeLocaleMap(data.title),
             description: normalizeLocaleMap(data.description),
             status: data.status ?? 'inactive',
+            expirationType: normalizeExpirationType(data.expirationType),
+            expirationDays: normalizeNumber(data.expirationDays),
+            expirationMonths: normalizeNumber(data.expirationMonths),
+            expirationDate: normalizeDate(data.expirationDate),
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           } satisfies Course;

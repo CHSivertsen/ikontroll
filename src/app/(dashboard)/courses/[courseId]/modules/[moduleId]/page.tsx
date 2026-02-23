@@ -44,6 +44,7 @@ import 'quill/dist/quill.snow.css';
 
 
 const DEFAULT_LANGUAGES = ['no', 'en'];
+const DEFAULT_EXAM_PASS_PERCENTAGE = 80;
 
 const generateId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -98,9 +99,12 @@ const createEmptyQuestion = (languages: string[]): CourseQuestion => {
     title: createEmptyLocaleMap(languages),
     contentText: createEmptyLocaleMap(languages),
     alternatives: [first, second],
+    correctAnswerIds: [first.id],
     correctAnswerId: first.id,
   };
 };
+
+const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
 
 const ensureLocaleKeys = (
   map: LocaleStringMap | undefined,
@@ -187,6 +191,13 @@ export default function CourseModuleDetailPage() {
       setDraft(null);
       return;
     }
+    const moduleType = module.moduleType === 'exam' ? 'exam' : 'normal';
+    const examPassPercentage =
+      moduleType === 'exam'
+        ? typeof module.examPassPercentage === 'number'
+          ? module.examPassPercentage
+          : DEFAULT_EXAM_PASS_PERCENTAGE
+        : undefined;
     const provisionalDraft: CourseModulePayload = {
       title: module.title ?? {},
       summary: module.summary ?? {},
@@ -196,6 +207,8 @@ export default function CourseModuleDetailPage() {
       imageUrls: module.imageUrls ?? {},
       order: module.order ?? 0,
       questions: module.questions ?? [],
+      moduleType,
+      examPassPercentage,
     };
 
     const discoveredLanguages = collectLanguagesFromModule(provisionalDraft);
@@ -281,7 +294,7 @@ export default function CourseModuleDetailPage() {
       setFormError(null);
       const normalizedMedia = ensureMediaLocales(draft.media, languages);
       const { imageUrls, videoUrls } = mediaMapToLegacyArrays(normalizedMedia);
-      await updateDoc(doc(db, 'courses', courseId, 'modules', moduleId), {
+      const updatePayload: Record<string, unknown> = {
         title: draft.title ?? {},
         summary: draft.summary ?? {},
         body: draft.body ?? {},
@@ -290,8 +303,19 @@ export default function CourseModuleDetailPage() {
         imageUrls,
         order: draft.order ?? 0,
         questions: draft.questions ?? [],
+        moduleType: draft.moduleType ?? 'normal',
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (draft.moduleType === 'exam') {
+        const passValue =
+          typeof draft.examPassPercentage === 'number'
+            ? draft.examPassPercentage
+            : DEFAULT_EXAM_PASS_PERCENTAGE;
+        updatePayload.examPassPercentage = clampPercentage(
+          Math.round(passValue),
+        );
+      }
+      await updateDoc(doc(db, 'courses', courseId, 'modules', moduleId), updatePayload);
     } catch (err) {
       console.error('Failed to update module', err);
       setFormError(
@@ -440,6 +464,38 @@ export default function CourseModuleDetailPage() {
             courseId={courseId}
             moduleId={moduleId}
           />
+
+          {draft.moduleType === 'exam' && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Eksamen</p>
+                  <p className="text-xs text-slate-500">
+                    Angi hvor stor andel riktige svar som kreves for å bestå.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <span>Beståelseskrav</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={draft.examPassPercentage ?? DEFAULT_EXAM_PASS_PERCENTAGE}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      updateField(
+                        'examPassPercentage',
+                        Number.isFinite(parsed) ? parsed : DEFAULT_EXAM_PASS_PERCENTAGE,
+                      );
+                    }}
+                    className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-right focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                  <span className="text-xs text-slate-500">%</span>
+                </label>
+              </div>
+            </div>
+          )}
 
           <QuestionListEditor
             questions={draft.questions}
@@ -1293,21 +1349,41 @@ const QuestionEditor = ({
     });
   };
 
+  const currentCorrectIds = Array.isArray(question.correctAnswerIds)
+    ? question.correctAnswerIds
+    : question.correctAnswerId
+      ? [question.correctAnswerId]
+      : [];
+
   const removeAlternative = (altId: string) => {
     const filtered = question.alternatives.filter((alt) => alt.id !== altId);
-    let nextCorrect = question.correctAnswerId;
-    if (nextCorrect === altId && filtered.length > 0) {
-      nextCorrect = filtered[0].id;
+    let nextCorrectIds = currentCorrectIds.filter((id) => id !== altId);
+    if (nextCorrectIds.length === 0 && filtered.length > 0) {
+      nextCorrectIds = [filtered[0].id];
     }
     onChange({
       ...question,
       alternatives: filtered,
-      correctAnswerId: nextCorrect,
+      correctAnswerIds: nextCorrectIds,
+      correctAnswerId: nextCorrectIds[0],
     });
   };
 
-  const updateCorrectAnswer = (altId: string) => {
-    onChange({ ...question, correctAnswerId: altId });
+  const toggleCorrectAnswer = (altId: string) => {
+    let nextCorrectIds = currentCorrectIds.includes(altId)
+      ? currentCorrectIds.filter((id) => id !== altId)
+      : [...currentCorrectIds, altId];
+    if (nextCorrectIds.length === 0) {
+      nextCorrectIds = [altId];
+    }
+    const ordered = question.alternatives
+      .map((alt) => alt.id)
+      .filter((id) => nextCorrectIds.includes(id));
+    onChange({
+      ...question,
+      correctAnswerIds: ordered.length ? ordered : nextCorrectIds,
+      correctAnswerId: (ordered.length ? ordered : nextCorrectIds)[0],
+    });
   };
 
   return (
@@ -1363,10 +1439,9 @@ const QuestionEditor = ({
                 <div className="flex items-center gap-2">
                   <label className="flex items-center gap-1 text-xs font-semibold text-slate-700">
                     <input
-                      type="radio"
-                      name={`question-${question.id}-correct`}
-                      checked={question.correctAnswerId === alternative.id}
-                      onChange={() => updateCorrectAnswer(alternative.id)}
+                      type="checkbox"
+                      checked={currentCorrectIds.includes(alternative.id)}
+                      onChange={() => toggleCorrectAnswer(alternative.id)}
                     />
                     Riktig svar
                   </label>

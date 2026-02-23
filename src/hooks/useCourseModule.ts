@@ -7,6 +7,8 @@ import { db } from '@/lib/firebase';
 import { normalizeModuleMediaMap } from '@/utils/media';
 import type {
   CourseModule,
+  CourseQuestion,
+  CourseModuleType,
   LocaleStringArrayMap,
   LocaleStringMap,
 } from '@/types/course';
@@ -48,6 +50,38 @@ const normalizeLocaleArrayMap = (value: unknown): LocaleStringArrayMap => {
   return { no: [String(value)] };
 };
 
+const normalizeModuleType = (value: unknown): CourseModuleType =>
+  value === 'exam' ? 'exam' : 'normal';
+
+const normalizeQuestion = (question: CourseQuestion): CourseQuestion => {
+  const alternatives = Array.isArray(question.alternatives)
+    ? question.alternatives
+    : [];
+  const altIds = alternatives.map((alt) => alt.id).filter(Boolean);
+  const rawCorrectIds = Array.isArray(question.correctAnswerIds)
+    ? question.correctAnswerIds.filter(
+        (id): id is string => typeof id === 'string' && altIds.includes(id),
+      )
+    : [];
+  const fallbackId =
+    typeof question.correctAnswerId === 'string' && altIds.includes(question.correctAnswerId)
+      ? question.correctAnswerId
+      : null;
+  const correctAnswerIds =
+    rawCorrectIds.length > 0
+      ? rawCorrectIds
+      : fallbackId
+        ? [fallbackId]
+        : altIds.length
+          ? [altIds[0]]
+          : [];
+  return {
+    ...question,
+    alternatives,
+    correctAnswerIds,
+    correctAnswerId: correctAnswerIds[0] ?? fallbackId ?? undefined,
+  };
+};
 
 interface UseCourseModuleState {
   module: CourseModule | null;
@@ -80,6 +114,11 @@ export const useCourseModule = (
           setError('Fant ikke emnet');
         } else {
           const data = snapshot.data();
+          const moduleType = normalizeModuleType(data.moduleType);
+          const examPassPercentage =
+            typeof data.examPassPercentage === 'number'
+              ? data.examPassPercentage
+              : undefined;
           setModule({
             id: snapshot.id,
             courseId,
@@ -90,7 +129,11 @@ export const useCourseModule = (
             videoUrls: normalizeLocaleArrayMap(data.videoUrls),
             imageUrls: normalizeLocaleArrayMap(data.imageUrls),
             order: data.order ?? 0,
-            questions: data.questions ?? [],
+            questions: Array.isArray(data.questions)
+              ? (data.questions as CourseQuestion[]).map(normalizeQuestion)
+              : [],
+            moduleType,
+            examPassPercentage,
             createdAt: data.createdAt?.toDate?.() ?? undefined,
             updatedAt: data.updatedAt?.toDate?.() ?? undefined,
           });

@@ -29,6 +29,8 @@ interface ConsumerModuleViewProps {
   basePath?: string; // e.g. '/my-courses'
 }
 
+const DEFAULT_EXAM_PASS_PERCENTAGE = 80;
+
 const isYouTubeUrl = (url: string): boolean =>
   /youtu\.be|youtube\.com/.test(url.toLowerCase());
 
@@ -50,6 +52,41 @@ const getFileNameFromUrl = (url: string) => {
     const parts = url.split('/');
     return decodeURIComponent(parts[parts.length - 1] || url);
   }
+};
+
+const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
+
+const getCorrectAnswerIds = (question: CourseQuestion): string[] => {
+  const alternatives = Array.isArray(question.alternatives)
+    ? question.alternatives
+    : [];
+  const altIds = alternatives.map((alt) => alt.id).filter(Boolean);
+  const rawCorrectIds = Array.isArray(question.correctAnswerIds)
+    ? question.correctAnswerIds.filter(
+        (id): id is string => typeof id === 'string' && altIds.includes(id),
+      )
+    : [];
+  if (rawCorrectIds.length > 0) {
+    return rawCorrectIds;
+  }
+  if (typeof question.correctAnswerId === 'string' && altIds.includes(question.correctAnswerId)) {
+    return [question.correctAnswerId];
+  }
+  return altIds.length ? [altIds[0]] : [];
+};
+
+const isQuestionMultiCorrect = (question: CourseQuestion) =>
+  getCorrectAnswerIds(question).length > 1;
+
+const isQuestionAnswerCorrect = (
+  question: CourseQuestion,
+  selectedIds: string[] | undefined,
+) => {
+  const correctIds = getCorrectAnswerIds(question);
+  if (!correctIds.length) return false;
+  const selected = Array.isArray(selectedIds) ? selectedIds : [];
+  if (selected.length !== correctIds.length) return false;
+  return correctIds.every((id) => selected.includes(id));
 };
 
 type MediaPreviewType = 'image' | 'video' | 'document';
@@ -90,6 +127,11 @@ export default function ConsumerModuleView({
   );
 
   const t = getTranslation(locale);
+  const moduleTranslations = t.modules as typeof t.modules & {
+    examPassRequirement: (percent: number) => string;
+    examPassed: string;
+    examFailed: (percent: number) => string;
+  };
 
   const localizedMedia = getLocalizedMediaItems(module.media, locale);
   const fallbackImages = getLocalizedList(module.imageUrls, locale);
@@ -121,11 +163,27 @@ export default function ConsumerModuleView({
       .map((line) => (line.length ? `<p>${line}</p>` : '<br />'))
       .join('');
   }, [rawBodyHtml]);
+  const bodyHtmlWithExternalLinks = useMemo(() => {
+    if (!bodyHtml) return '';
+    if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
+      return bodyHtml;
+    }
+    try {
+      const doc = new DOMParser().parseFromString(bodyHtml, 'text/html');
+      doc.querySelectorAll('a[href]').forEach((anchor) => {
+        anchor.setAttribute('target', '_blank');
+        anchor.setAttribute('rel', 'noopener noreferrer');
+      });
+      return doc.body.innerHTML;
+    } catch {
+      return bodyHtml;
+    }
+  }, [bodyHtml]);
   const questions = module.questions ?? [];
   const isModuleCompleted = completedModules.includes(module.id);
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [showSummary, setShowSummary] = useState(false);
   const [showCourseComplete, setShowCourseComplete] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -137,8 +195,17 @@ export default function ConsumerModuleView({
   const completionRecordedRef = useRef(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
-  const handleSelectAlternative = (questionId: string, alternativeId: string) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: alternativeId }));
+  const handleSelectAlternative = (question: CourseQuestion, alternativeId: string) => {
+    setAnswers((prev) => {
+      const existing = prev[question.id] ?? [];
+      if (isQuestionMultiCorrect(question)) {
+        const next = existing.includes(alternativeId)
+          ? existing.filter((id) => id !== alternativeId)
+          : [...existing, alternativeId];
+        return { ...prev, [question.id]: next };
+      }
+      return { ...prev, [question.id]: [alternativeId] };
+    });
   };
 
   const handleNext = () => {
@@ -165,17 +232,34 @@ export default function ConsumerModuleView({
   const incorrectQuestions = useMemo(
     () =>
       questions.filter(
-        (question) => answers[question.id] !== question.correctAnswerId,
+        (question) => !isQuestionAnswerCorrect(question, answers[question.id]),
       ),
     [questions, answers],
   );
+
+  const moduleType = module.moduleType ?? 'normal';
+  const isExamModule = moduleType === 'exam';
+  const scorePercentage = questions.length
+    ? Math.round(
+        ((questions.length - incorrectQuestions.length) / questions.length) * 100,
+      )
+    : 0;
+  const requiredPercentage = isExamModule
+    ? clampPercentage(
+        typeof module.examPassPercentage === 'number'
+          ? module.examPassPercentage
+          : DEFAULT_EXAM_PASS_PERCENTAGE,
+      )
+    : 100;
+  const hasPassed = isExamModule
+    ? scorePercentage >= requiredPercentage
+    : incorrectQuestions.length === 0;
 
   useEffect(() => {
     if (!module.id || !showSummary || questions.length === 0) {
       return;
     }
-    const allCorrect = incorrectQuestions.length === 0;
-    if (allCorrect) {
+    if (hasPassed) {
       setModuleCompletion(module.id, true).then(() => {
         // Check for overall course completion
         if (!modules) return;
@@ -194,7 +278,7 @@ export default function ConsumerModuleView({
   }, [
     module.id,
     showSummary,
-    incorrectQuestions.length,
+    hasPassed,
     questions.length,
     setModuleCompletion,
     completedModules,
@@ -321,11 +405,7 @@ export default function ConsumerModuleView({
     }
   };
 
-  const scorePercentage = questions.length
-    ? Math.round(
-        ((questions.length - incorrectQuestions.length) / questions.length) * 100,
-      )
-    : 0;
+  const canAdvance = isExamModule ? hasPassed : incorrectQuestions.length === 0;
 
   if (showCourseComplete) {
     return (
@@ -465,7 +545,7 @@ export default function ConsumerModuleView({
           <h2 className="text-xl font-semibold text-slate-900">{t.modules.content}</h2>
           <div
             className="prose prose-slate mt-4 max-w-none"
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+            dangerouslySetInnerHTML={{ __html: bodyHtmlWithExternalLinks }}
           />
         </section>
       )}
@@ -487,6 +567,18 @@ export default function ConsumerModuleView({
                 <p>
                   {t.modules.result(questions.length - incorrectQuestions.length, questions.length, scorePercentage)}
                 </p>
+                {isExamModule && (
+                  <p className="mt-2 text-sm font-semibold">
+                    {hasPassed
+                      ? moduleTranslations.examPassed
+                      : moduleTranslations.examFailed(requiredPercentage)}
+                  </p>
+                )}
+                {isExamModule && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    {moduleTranslations.examPassRequirement(requiredPercentage)}
+                  </p>
+                )}
               </div>
               {incorrectQuestions.length > 0 ? (
                 <div className="space-y-4">
@@ -498,12 +590,22 @@ export default function ConsumerModuleView({
                       question.contentText,
                       locale,
                     );
-                    const correctAlternative = question.alternatives.find(
-                      (alternative) => alternative.id === question.correctAnswerId,
+                    const correctIds = getCorrectAnswerIds(question);
+                    const correctAlternatives = question.alternatives.filter((alternative) =>
+                      correctIds.includes(alternative.id),
                     );
-                    const userAlternative = question.alternatives.find(
-                      (alternative) => alternative.id === answers[question.id],
+                    const selectedIds = answers[question.id] ?? [];
+                    const userAlternatives = question.alternatives.filter((alternative) =>
+                      selectedIds.includes(alternative.id),
                     );
+                    const userAnswerText = userAlternatives.length
+                      ? userAlternatives
+                          .map((alternative) => getAlternativeLabel(alternative, locale))
+                          .join(', ')
+                      : '—';
+                    const correctAnswerText = correctAlternatives
+                      .map((alternative) => getAlternativeLabel(alternative, locale))
+                      .join(', ');
                     return (
                       <div
                         key={question.id}
@@ -513,15 +615,11 @@ export default function ConsumerModuleView({
                           {questionText || t.modules.question}
                         </p>
                         <p className="mt-2 text-sm text-red-600">
-                          {t.modules.yourAnswer}{' '}
-                          {userAlternative
-                            ? getAlternativeLabel(userAlternative, locale)
-                            : '—'}
+                          {t.modules.yourAnswer} {userAnswerText}
                         </p>
-                        {correctAlternative && (
+                        {correctAnswerText && (
                           <p className="text-sm text-slate-600">
-                            {t.modules.correctAnswer}{' '}
-                            {getAlternativeLabel(correctAlternative, locale)}
+                            {t.modules.correctAnswer} {correctAnswerText}
                           </p>
                         )}
                       </div>
@@ -552,7 +650,7 @@ export default function ConsumerModuleView({
                     {t.modules.backToOverview}
                   </button>
                 </div>
-                {incorrectQuestions.length === 0 && nextModuleId && !showCourseComplete && (
+                {canAdvance && nextModuleId && !showCourseComplete && (
                   <button
                   type="button"
                     onClick={handleGoToNextModule}
@@ -571,12 +669,14 @@ export default function ConsumerModuleView({
               <div className="space-y-3">
                 {currentQuestion.alternatives.map((alternative) => {
                   const label = getAlternativeLabel(alternative, locale);
-                  const isSelected = answers[currentQuestion.id] === alternative.id;
+                  const isSelected = (answers[currentQuestion.id] ?? []).includes(
+                    alternative.id,
+                  );
                   return (
                     <button
                       key={alternative.id}
                       onClick={() =>
-                        handleSelectAlternative(currentQuestion.id, alternative.id)
+                        handleSelectAlternative(currentQuestion, alternative.id)
                       }
                       className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
                         isSelected
@@ -599,7 +699,7 @@ export default function ConsumerModuleView({
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={!answers[currentQuestion.id]}
+                  disabled={!(answers[currentQuestion.id]?.length ?? 0)}
                   className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {currentIndex === questions.length - 1

@@ -74,6 +74,42 @@ const getAlternativeLabel = (
   locale: string,
 ) => getLocalizedValue(alternative.altText, locale) || 'Alternativ';
 
+const DEFAULT_EXAM_PASS_PERCENTAGE = 80;
+const clampPercentage = (value: number) => Math.min(100, Math.max(0, value));
+
+const getCorrectAnswerIds = (question: CourseQuestion): string[] => {
+  const alternatives = Array.isArray(question.alternatives)
+    ? question.alternatives
+    : [];
+  const altIds = alternatives.map((alt) => alt.id).filter(Boolean);
+  const rawCorrectIds = Array.isArray(question.correctAnswerIds)
+    ? question.correctAnswerIds.filter(
+        (id): id is string => typeof id === 'string' && altIds.includes(id),
+      )
+    : [];
+  if (rawCorrectIds.length > 0) {
+    return rawCorrectIds;
+  }
+  if (typeof question.correctAnswerId === 'string' && altIds.includes(question.correctAnswerId)) {
+    return [question.correctAnswerId];
+  }
+  return altIds.length ? [altIds[0]] : [];
+};
+
+const isQuestionMultiCorrect = (question: CourseQuestion) =>
+  getCorrectAnswerIds(question).length > 1;
+
+const isQuestionAnswerCorrect = (
+  question: CourseQuestion,
+  selectedIds: string[] | undefined,
+) => {
+  const correctIds = getCorrectAnswerIds(question);
+  if (!correctIds.length) return false;
+  const selected = Array.isArray(selectedIds) ? selectedIds : [];
+  if (selected.length !== correctIds.length) return false;
+  return correctIds.every((id) => selected.includes(id));
+};
+
 const getQuizButtonLabels = (locale: string) => {
   switch (locale) {
     case 'en':
@@ -192,12 +228,21 @@ export default function ModulePreviewPage({
   const quizLabels = getQuizButtonLabels(locale);
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [showSummary, setShowSummary] = useState(false);
 
   const currentQuestion: CourseQuestion | undefined = questions[currentIndex];
-  const handleSelectAlternative = (questionId: string, alternativeId: string) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: alternativeId }));
+  const handleSelectAlternative = (question: CourseQuestion, alternativeId: string) => {
+    setAnswers((prev) => {
+      const existing = prev[question.id] ?? [];
+      if (isQuestionMultiCorrect(question)) {
+        const next = existing.includes(alternativeId)
+          ? existing.filter((id) => id !== alternativeId)
+          : [...existing, alternativeId];
+        return { ...prev, [question.id]: next };
+      }
+      return { ...prev, [question.id]: [alternativeId] };
+    });
   };
 
   const handleNext = () => {
@@ -222,19 +267,36 @@ export default function ModulePreviewPage({
   const incorrectQuestions = useMemo(
     () =>
       questions.filter(
-        (question) => answers[question.id] !== question.correctAnswerId,
+        (question) => !isQuestionAnswerCorrect(question, answers[question.id]),
       ),
     [questions, answers],
   );
+
+  const moduleType = module?.moduleType === 'exam' ? 'exam' : 'normal';
+  const isExamModule = moduleType === 'exam';
+  const scorePercentage = questions.length
+    ? Math.round(
+        ((questions.length - incorrectQuestions.length) / questions.length) * 100,
+      )
+    : 0;
+  const requiredPercentage = isExamModule
+    ? clampPercentage(
+        typeof module?.examPassPercentage === 'number'
+          ? module.examPassPercentage
+          : DEFAULT_EXAM_PASS_PERCENTAGE,
+      )
+    : 100;
+  const hasPassed = isExamModule
+    ? scorePercentage >= requiredPercentage
+    : incorrectQuestions.length === 0;
 
   useEffect(() => {
     if (!module?.id || !showSummary || questions.length === 0) {
       return;
     }
-    const allCorrect = incorrectQuestions.length === 0;
     (async () => {
       try {
-        await setModuleCompletion(module.id, allCorrect);
+        await setModuleCompletion(module.id, hasPassed);
       } catch (err) {
         console.error('Failed to update module progress', err);
       }
@@ -242,7 +304,7 @@ export default function ModulePreviewPage({
   }, [
     module?.id,
     showSummary,
-    incorrectQuestions.length,
+    hasPassed,
     questions.length,
     setModuleCompletion,
   ]);
@@ -264,12 +326,6 @@ export default function ModulePreviewPage({
       </div>
     );
   }
-
-  const scorePercentage = questions.length
-    ? Math.round(
-        ((questions.length - incorrectQuestions.length) / questions.length) * 100,
-      )
-    : 0;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-8 px-4 pb-12 pt-10 md:px-8">
@@ -368,6 +424,13 @@ export default function ModulePreviewPage({
                   Du fikk {questions.length - incorrectQuestions.length} av{' '}
                   {questions.length} riktige ({scorePercentage}%).
                 </p>
+                {isExamModule && (
+                  <p className="mt-2 text-sm font-semibold">
+                    {hasPassed
+                      ? 'Eksamen bestått.'
+                      : `Eksamen ikke bestått. Krav: ${requiredPercentage}%.`}
+                  </p>
+                )}
               </div>
               {incorrectQuestions.length > 0 ? (
                 <div className="space-y-4">
@@ -379,12 +442,22 @@ export default function ModulePreviewPage({
                       question.contentText,
                       locale,
                     );
-                    const correctAlternative = question.alternatives.find(
-                      (alternative) => alternative.id === question.correctAnswerId,
+                    const correctIds = getCorrectAnswerIds(question);
+                    const correctAlternatives = question.alternatives.filter((alternative) =>
+                      correctIds.includes(alternative.id),
                     );
-                    const userAlternative = question.alternatives.find(
-                      (alternative) => alternative.id === answers[question.id],
+                    const selectedIds = answers[question.id] ?? [];
+                    const userAlternatives = question.alternatives.filter((alternative) =>
+                      selectedIds.includes(alternative.id),
                     );
+                    const userAnswerText = userAlternatives.length
+                      ? userAlternatives
+                          .map((alternative) => getAlternativeLabel(alternative, locale))
+                          .join(', ')
+                      : '—';
+                    const correctAnswerText = correctAlternatives
+                      .map((alternative) => getAlternativeLabel(alternative, locale))
+                      .join(', ');
                     return (
                       <div
                         key={question.id}
@@ -394,15 +467,11 @@ export default function ModulePreviewPage({
                           {questionText || 'Spørsmål'}
                         </p>
                         <p className="mt-2 text-sm text-red-600">
-                          Ditt svar:{' '}
-                          {userAlternative
-                            ? getAlternativeLabel(userAlternative, locale)
-                            : '—'}
+                          Ditt svar: {userAnswerText}
                         </p>
-                        {correctAlternative && (
+                        {correctAnswerText && (
                           <p className="text-sm text-slate-600">
-                            Riktig svar:{' '}
-                            {getAlternativeLabel(correctAlternative, locale)}
+                            Riktig svar: {correctAnswerText}
                           </p>
                         )}
                       </div>
@@ -438,12 +507,14 @@ export default function ModulePreviewPage({
               <div className="space-y-3">
                 {currentQuestion.alternatives.map((alternative) => {
                   const label = getAlternativeLabel(alternative, locale);
-                  const isSelected = answers[currentQuestion.id] === alternative.id;
+                  const isSelected = (answers[currentQuestion.id] ?? []).includes(
+                    alternative.id,
+                  );
                   return (
                     <button
                       key={alternative.id}
                       onClick={() =>
-                        handleSelectAlternative(currentQuestion.id, alternative.id)
+                        handleSelectAlternative(currentQuestion, alternative.id)
                       }
                       className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
                         isSelected
@@ -466,7 +537,7 @@ export default function ModulePreviewPage({
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={!answers[currentQuestion.id]}
+                  disabled={!(answers[currentQuestion.id]?.length ?? 0)}
                   className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {currentIndex === questions.length - 1

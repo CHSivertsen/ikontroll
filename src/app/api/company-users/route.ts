@@ -313,7 +313,10 @@ export async function POST(request: NextRequest) {
       addedCourseIds,
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid, user.email);
+    const shouldResetPassword = !user.roles?.includes('admin');
+    await notifyCourseAssignments(user.phone, addedCourseIds, authUser.uid, user.email, {
+      resetPassword: shouldResetPassword,
+    });
 
 
     return NextResponse.json({
@@ -371,7 +374,10 @@ export async function PATCH(request: NextRequest) {
       addedCourseIds,
     });
 
-    await notifyCourseAssignments(user.phone, addedCourseIds, authTarget, user.email);
+    const shouldResetPassword = !user.roles?.includes('admin');
+    await notifyCourseAssignments(user.phone, addedCourseIds, authTarget, user.email, {
+      resetPassword: shouldResetPassword,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
@@ -600,12 +606,22 @@ const notifyCourseAssignments = async (
   courseIds: string[],
   authUid: string | undefined,
   email: string,
+  options?: { resetPassword?: boolean },
 ) => {
   const hasAuthUid = Boolean(authUid);
   if (!courseIds.length || !authUid) {
     console.log('notifyCourseAssignments skipped', {
       courseIdsLength: courseIds.length,
       hasAuthUid,
+    });
+    return;
+  }
+
+  const shouldResetPassword = options?.resetPassword ?? true;
+  if (!shouldResetPassword) {
+    console.log('notifyCourseAssignments skipped password reset', {
+      email,
+      courseIdsLength: courseIds.length,
     });
     return;
   }
